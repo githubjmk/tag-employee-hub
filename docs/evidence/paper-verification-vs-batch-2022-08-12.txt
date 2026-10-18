@@ -1,0 +1,80 @@
+Batch 2022-08-12 (13 pages, names redacted in the page file):
+MATCH  WR-PAPER intro.en: Please complete the following survey in order to assist the company with our compliance of
+MATCH  WR-PAPER instruction.en: Circle Your Answers Please
+MATCH  WR-PAPER q1.en: Please rate your productivity this week:
+MATCH  WR-PAPER q1.opt5.en: (5) Superior
+MATCH  WR-PAPER q1.opt4.en: (4) Excellent
+MATCH  WR-PAPER q1.opt3.en: (3) Good
+MATCH  WR-PAPER q1.opt2.en: (2) Fair
+MATCH  WR-PAPER q1.opt1.en: (1) Poor
+MATCH  WR-PAPER q2.en: Please rate your compliance with our safety rules:
+MATCH  WR-PAPER q2.opt5.en: (5) Superior
+MATCH  WR-PAPER q2.opt4.en: (4) Excellent
+MATCH  WR-PAPER q2.opt3.en: (3) Good
+MATCH  WR-PAPER q2.opt2.en: (2) Fair
+MATCH  WR-PAPER q2.opt1.en: (1) Poor
+MATCH  WR-PAPER q3.en: Did you report any safety issues to management this week?
+MATCH  WR-PAPER q3.optyes.en: Yes
+MATCH  WR-PAPER q3.optno.en: No
+MATCH  WR-PAPER q4.en: Have you suffered any injury at work or outside or work?
+MATCH  WR-PAPER q4.optyes.en: Yes
+MATCH  WR-PAPER q4.optno.en: No
+MATCH  WR-PAPER intro.es: Por favor complete la siguiente encuesta con el fin de ayudar a la empresa con nuestro cum
+MATCH  WR-PAPER instruction.es: Marcar su respuestas por favor
+MATCH  WR-PAPER q1.es: Por favor, califique su productividad esta semana:
+MATCH  WR-PAPER q1.opt5.es: (5) Superior
+MATCH  WR-PAPER q1.opt4.es: (4) Excelente
+MATCH  WR-PAPER q1.opt3.es: (3) Bien
+MATCH  WR-PAPER q1.opt2.es: (2) Regular
+MATCH  WR-PAPER q1.opt1.es: (1) Malo
+MATCH  WR-PAPER q2.es: Por favor, califique el cumplimiento de nuestras reglas de seguridad:
+MATCH  WR-PAPER q2.opt5.es: (5) Superior
+MATCH  WR-PAPER q2.opt4.es: (4) Excelente
+MATCH  WR-PAPER q2.opt3.es: (3) Bien
+MATCH  WR-PAPER q2.opt2.es: (2) Regular
+MATCH  WR-PAPER q2.opt1.es: (1) Malo
+MATCH  WR-PAPER q3.es: ¿Sabía usted reporta cualquier problema de seguridad para la gestión de esta semana?
+MATCH  WR-PAPER q3.optyes.es: Si
+MATCH  WR-PAPER q3.optno.es: No
+MATCH  WR-PAPER q4.es: ¿Ha sufrido alguna lesión en el trabajo o en el exterior o en el trabajo?
+MATCH  WR-PAPER q4.optyes.es: Si
+MATCH  WR-PAPER q4.optno.es: No
+MATCH  WR-1.0 q1.en: Please rate your productivity this week:
+MATCH  WR-1.0 q1.opt5.en: (5) Superior
+MATCH  WR-1.0 q1.opt4.en: (4) Excellent
+MATCH  WR-1.0 q1.opt3.en: (3) Good
+MATCH  WR-1.0 q1.opt2.en: (2) Fair
+MATCH  WR-1.0 q1.opt1.en: (1) Poor
+MATCH  WR-1.0 q2.en: Please rate your compliance with our safety rules:
+MATCH  WR-1.0 q2.opt5.en: (5) Superior
+MATCH  WR-1.0 q2.opt4.en: (4) Excellent
+MATCH  WR-1.0 q2.opt3.en: (3) Good
+MATCH  WR-1.0 q2.opt2.en: (2) Fair
+MATCH  WR-1.0 q2.opt1.en: (1) Poor
+MATCH  WR-1.0 q3.en: Did you report any safety issues to management this week?
+MATCH  WR-1.0 q3.optyes.en: Yes
+MATCH  WR-1.0 q3.optno.en: No
+MATCH  WR-1.0 q4.en: Have you suffered any injury at work or outside or work?
+MATCH  WR-1.0 q4.optyes.en: Yes
+MATCH  WR-1.0 q4.optno.en: No
+MATCH  WR-1.0 q1.es: Por favor, califique su productividad esta semana:
+MATCH  WR-1.0 q1.opt5.es: (5) Superior
+MATCH  WR-1.0 q1.opt4.es: (4) Excelente
+MATCH  WR-1.0 q1.opt3.es: (3) Bien
+MATCH  WR-1.0 q1.opt2.es: (2) Regular
+MATCH  WR-1.0 q1.opt1.es: (1) Malo
+MATCH  WR-1.0 q2.es: Por favor, califique el cumplimiento de nuestras reglas de seguridad:
+MATCH  WR-1.0 q2.opt5.es: (5) Superior
+MATCH  WR-1.0 q2.opt4.es: (4) Excelente
+MATCH  WR-1.0 q2.opt3.es: (3) Bien
+MATCH  WR-1.0 q2.opt2.es: (2) Regular
+MATCH  WR-1.0 q2.opt1.es: (1) Malo
+MATCH  WR-1.0 q3.es: ¿Sabía usted reporta cualquier problema de seguridad para la gestión de esta semana?
+MATCH  WR-1.0 q3.optyes.es: Si
+MATCH  WR-1.0 q3.optno.es: No
+MATCH  WR-1.0 q4.es: ¿Ha sufrido alguna lesión en el trabajo o en el exterior o en el trabajo?
+MATCH  WR-1.0 q4.optyes.es: Si
+MATCH  WR-1.0 q4.optno.es: No
+MATCH  WR-1.0 intro.en = paper intro minus withheld G1 sentence
+MATCH  WR-1.0 intro.es = paper intro minus withheld G1 sentence
+All checked strings match the paper source verbatim.

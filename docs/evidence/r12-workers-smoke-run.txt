@@ -1,0 +1,8 @@
+PASS W1 security headers on static assets served by the Worker
+PASS W2 CSRF header, body limit and auth enforced through the Durable Object
+PASS W3 sign and submit through the Durable Object; retry is idempotent
+PASS W4 scheduler tick runs inside the Durable Object
+PASS W5 data, session and demo clock survive a restart of the local runtime
+PASS W6 audit hash chain and signed records verify after restart
+6/6 Workers smoke checks passed
+smoke exit 0

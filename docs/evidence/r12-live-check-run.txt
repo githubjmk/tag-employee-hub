@@ -1,0 +1,13 @@
+PASS L1 security headers on the live address - CSP, frame and nosniff headers on the page and script, served over HTTPS
+PASS L2 request checks enforced - 403 without the request header, 413 oversize, 401 when not signed in
+PASS L3 reset and clock endpoints are switched off - {'/api/dev/reset': 404, '/api/dev/tick': 404}
+PASS L4 staff sign-in with ID + PIN; cookie flags - session cookie is HttpOnly, Secure, SameSite=Strict
+PASS L5 sign and submit the weekly report; retry is idempotent; record verifies - {'submission': 'SUB-702E765730', 'retrySameRecord': True, 'integrity': 'verified'}
+PASS L6 staff cannot open management screens - staff get 403 on Employee Accounts
+PASS L7 wrong PIN refused - wrong PIN refused (401); correct PIN then accepted
+PASS L8 management sign-in requires the authenticator code - without authenticator code: ?; with code: signed in
+PASS L9 audit hash chain and signed records verify on the live copy - {'auditEvents': 216, 'signedRecordsChecked': 111}
+   filed sample urgent report SR-7722C5E6E4 - waiting for the alarm to escalate it
+PASS L10 scheduler runs on its own in Cloudflare (urgent report escalates when unacknowledged) - {'report': 'SR-7722C5E6E4', 'escalationsQueued': 2, 'minutesWaited': 15.1, 'firstEscalationAt': '2026-10-16T17:48:00.157Z'}
+10/10 live checks passed
+live exit 0

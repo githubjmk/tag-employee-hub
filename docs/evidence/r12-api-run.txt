@@ -1,0 +1,279 @@
+
+> tag-employee-hub-r1-2@1.2.0-demo test
+> node --no-warnings --test --test-concurrency=1 tests/api.test.mjs
+
+TAP version 13
+# Subtest: 01 authenticated employee access: own report on the shop tablet; no session, no access
+ok 1 - 01 authenticated employee access: own report on the shop tablet; no session, no access
+  ---
+  duration_ms: 3385.537445
+  type: 'test'
+  ...
+# Subtest: 02 cross-employee isolation: records, drafts, corrections, responses, safety and evidence
+ok 2 - 02 cross-employee isolation: records, drafts, corrections, responses, safety and evidence
+  ---
+  duration_ms: 75.988552
+  type: 'test'
+  ...
+# Subtest: 03 impersonation: an open session cannot sign without its owner's PIN; nobody signs for someone else
+ok 3 - 03 impersonation: an open session cannot sign without its owner's PIN; nobody signs for someone else
+  ---
+  duration_ms: 69.993635
+  type: 'test'
+  ...
+# Subtest: 03b sign-in: staff use ID + PIN from any browser; management adds an authenticator code; temporary PINs; weak PINs
+ok 4 - 03b sign-in: staff use ID + PIN from any browser; management adds an authenticator code; temporary PINs; weak PINs
+  ---
+  duration_ms: 324.335957
+  type: 'test'
+  ...
+# Subtest: 03c lockout: 5 wrong PINs lock for 15 min; 3 lockouts in 24 h need a reset; a lockout while signing ends the session
+ok 5 - 03c lockout: 5 wrong PINs lock for 15 min; 3 lockouts in 24 h need a reset; a lockout while signing ends the session
+  ---
+  duration_ms: 401.150774
+  type: 'test'
+  ...
+# Subtest: 04 survey assignment by week: payroll week, opens Friday 07:00, due Monday 15:30, active questionnaire version
+ok 6 - 04 survey assignment by week: payroll week, opens Friday 07:00, due Monday 15:30, active questionnaire version
+  ---
+  duration_ms: 68.24052
+  type: 'test'
+  ...
+# Subtest: 05 missing and late: past due shows missing; late signing is allowed and flagged everywhere
+ok 7 - 05 missing and late: past due shows missing; late signing is allowed and flagged everywhere
+  ---
+  duration_ms: 125.305391
+  type: 'test'
+  ...
+# Subtest: 06 partial-week eligibility: new hires, absences, separations; recomputed when an absence is added
+ok 8 - 06 partial-week eligibility: new hires, absences, separations; recomputed when an absence is added
+  ---
+  duration_ms: 95.173842
+  type: 'test'
+  ...
+# Subtest: 07 draft preservation: survives a timeout and sign-in on the tablet; private; removed on submit
+ok 9 - 07 draft preservation: survives a timeout and sign-in on the tablet; private; removed on submit
+  ---
+  duration_ms: 71.632444
+  type: 'test'
+  ...
+# Subtest: 08 duplicate submission prevention: concurrent double taps (same key) give one record; a later different key is refused
+ok 10 - 08 duplicate submission prevention: concurrent double taps (same key) give one record; a later different key is refused
+  ---
+  duration_ms: 52.737354
+  type: 'test'
+  ...
+# Subtest: 09 explicit signature: acknowledgment box + PIN; e-sign consent is given with the first signature; paper choice respected
+ok 11 - 09 explicit signature: acknowledgment box + PIN; e-sign consent is given with the first signature; paper choice respected
+  ---
+  duration_ms: 124.173013
+  type: 'test'
+  ...
+# Subtest: 10 signature timestamps: UTC and local with offset, reporting week, due time, late flag
+ok 12 - 10 signature timestamps: UTC and local with offset, reporting week, due time, late flag
+  ---
+  duration_ms: 0.764867
+  type: 'test'
+  ...
+# Subtest: 11 signed records and evidence are append-only at the database level; integrity check catches tampering
+ok 13 - 11 signed records and evidence are append-only at the database level; integrity check catches tampering
+  ---
+  duration_ms: 42.828511
+  type: 'test'
+  ...
+# Subtest: 12 amendment history: corrections are separately signed, keep the original, and reopen review
+ok 14 - 12 amendment history: corrections are separately signed, keep the original, and reopen review
+  ---
+  duration_ms: 67.077227
+  type: 'test'
+  ...
+# Subtest: 13 supervisor authorization: team only; managers see status not answers; safety sees no survey answers; HR sees all
+ok 15 - 13 supervisor authorization: team only; managers see status not answers; safety sees no survey answers; HR sees all
+  ---
+  duration_ms: 139.124506
+  type: 'test'
+  ...
+# Subtest: 14 supervisor sign-off: questions and answers, closure rules, separate signature, "seen" is not agreement
+ok 16 - 14 supervisor sign-off: questions and answers, closure rules, separate signature, "seen" is not agreement
+  ---
+  duration_ms: 101.093061
+  type: 'test'
+  ...
+# Subtest: 15 corrective-action ownership: evidence required, verified by someone else, scoped by role
+ok 17 - 15 corrective-action ownership: evidence required, verified by someone else, scoped by role
+  ---
+  duration_ms: 68.543406
+  type: 'test'
+  ...
+# Subtest: 16 urgent safety reports sort first and escalate every 15 minutes until acknowledged
+ok 18 - 16 urgent safety reports sort first and escalate every 15 minutes until acknowledged
+  ---
+  duration_ms: 100.138988
+  type: 'test'
+  ...
+# Subtest: 17 notification delivery with retry: failures back off 1, 2, 5 minutes and then deliver
+ok 19 - 17 notification delivery with retry: failures back off 1, 2, 5 minutes and then deliver
+  ---
+  duration_ms: 44.787521
+  type: 'test'
+  ...
+# Subtest: 18 failed notifications are visible, never reported as delivered, and trigger backup routes
+ok 20 - 18 failed notifications are visible, never reported as delivered, and trigger backup routes
+  ---
+  duration_ms: 79.729157
+  type: 'test'
+  ...
+# Subtest: 19 shared-device sessions: 5-minute idle limit, sign-out, revoked tablet ends its sessions
+ok 21 - 19 shared-device sessions: 5-minute idle limit, sign-out, revoked tablet ends its sessions
+  ---
+  duration_ms: 154.199421
+  type: 'test'
+  ...
+# Subtest: 23 employees can download their own signed record; others and anonymous cannot
+ok 22 - 23 employees can download their own signed record; others and anonymous cannot
+  ---
+  duration_ms: 52.05245
+  type: 'test'
+  ...
+# Subtest: 24 historical reporting: week, month and 12-week views; filters; supervisor reliability; recurring problems
+ok 23 - 24 historical reporting: week, month and 12-week views; filters; supervisor reliability; recurring problems
+  ---
+  duration_ms: 117.583153
+  type: 'test'
+  ...
+# Subtest: 25 time zone and daylight saving: weeks, due times and signature offsets
+ok 24 - 25 time zone and daylight saving: weeks, due times and signature offsets
+  ---
+  duration_ms: 39.883185
+  type: 'test'
+  ...
+# Subtest: S1 hashing: pure-JS SHA-256 matches node:crypto; attachments are type/size checked and hashed
+ok 25 - S1 hashing: pure-JS SHA-256 matches node:crypto; attachments are type/size checked and hashed
+  ---
+  duration_ms: 62.280808
+  type: 'test'
+  ...
+# Subtest: S2 transport: CSRF header, unknown and prototype action names, raw path traversal, CSP
+ok 26 - S2 transport: CSRF header, unknown and prototype action names, raw path traversal, CSP
+  ---
+  duration_ms: 27.142287
+  type: 'test'
+  ...
+# Subtest: S3 separation: revokes access immediately, cancels queued alerts, keeps every record
+ok 27 - S3 separation: revokes access immediately, cancels queued alerts, keeps every record
+  ---
+  duration_ms: 46.209503
+  type: 'test'
+  ...
+# Subtest: 08b concurrent submits with different keys still produce exactly one record
+ok 28 - 08b concurrent submits with different keys still produce exactly one record
+  ---
+  duration_ms: 60.349393
+  type: 'test'
+  ...
+# Subtest: 14b supervisor asks and withdraws a question; record carries its questionnaire version; injury follow-up hidden from the supervisor
+ok 29 - 14b supervisor asks and withdraws a question; record carries its questionnaire version; injury follow-up hidden from the supervisor
+  ---
+  duration_ms: 135.123668
+  type: 'test'
+  ...
+# Subtest: 16b safety lead classifies and reassigns; confidential owners limited; the proposer cannot verify
+ok 30 - 16b safety lead classifies and reassigns; confidential owners limited; the proposer cannot verify
+  ---
+  duration_ms: 75.067411
+  type: 'test'
+  ...
+# Subtest: R12-01 account lifecycle: management creates an account, gives a temporary PIN, the person must change it; deactivation ends access
+ok 31 - R12-01 account lifecycle: management creates an account, gives a temporary PIN, the person must change it; deactivation ends access
+  ---
+  duration_ms: 145.19229
+  type: 'test'
+  ...
+# Subtest: R12-02 management accounts: individual credentials + MFA; role changes take effect at next sign-in
+ok 32 - R12-02 management accounts: individual credentials + MFA; role changes take effect at next sign-in
+  ---
+  duration_ms: 148.889375
+  type: 'test'
+  ...
+# Subtest: R12-03 permission boundaries: staff vs management vs full access
+ok 33 - R12-03 permission boundaries: staff vs management vs full access
+  ---
+  duration_ms: 78.816031
+  type: 'test'
+  ...
+# Subtest: R12-04 PIN guessing: per-account lockout and a per-connection rate limit over HTTP
+ok 34 - R12-04 PIN guessing: per-account lockout and a per-connection rate limit over HTTP
+  ---
+  duration_ms: 162.640437
+  type: 'test'
+  ...
+# Subtest: R12-05 designated safety contacts get urgent alerts; other management is reached by escalation
+ok 35 - R12-05 designated safety contacts get urgent alerts; other management is reached by escalation
+  ---
+  duration_ms: 57.456779
+  type: 'test'
+  ...
+# Subtest: R12-06 work-hours window: the weekly report is filled in only on paid time; safety reports are never blocked
+ok 36 - R12-06 work-hours window: the weekly report is filled in only on paid time; safety reports are never blocked
+  ---
+  duration_ms: 70.479252
+  type: 'test'
+  ...
+# Subtest: R12-07 first-account setup: works once on an empty production database, with the setup code, then switches off
+ok 37 - R12-07 first-account setup: works once on an empty production database, with the setup code, then switches off
+  ---
+  duration_ms: 70.81102
+  type: 'test'
+  ...
+# Subtest: R12-08 GoTo texting: a text is "sent" until GoTo confirms delivery; failures retry; no receipt in 5 minutes counts as failed
+ok 38 - R12-08 GoTo texting: a text is "sent" until GoTo confirms delivery; failures retry; no receipt in 5 minutes counts as failed
+  ---
+  duration_ms: 3308.944482
+  type: 'test'
+  ...
+# Subtest: R12-09 HTTP: bot check on sign-in when configured; GoTo receipts only with the webhook secret; no CSRF bypass elsewhere
+ok 39 - R12-09 HTTP: bot check on sign-in when configured; GoTo receipts only with the webhook secret; no CSRF bypass elsewhere
+  ---
+  duration_ms: 19.280424
+  type: 'test'
+  ...
+# Subtest: R12-10 authenticator secrets are encrypted at rest; older plain values are encrypted at start-up; a different pepper cannot read them
+ok 40 - R12-10 authenticator secrets are encrypted at rest; older plain values are encrypted at start-up; a different pepper cannot read them
+  ---
+  duration_ms: 40.053132
+  type: 'test'
+  ...
+# Subtest: R12-11 point-in-time restore: full access only, PIN + authenticator + typed RESTORE, 30-day window, durable log copied into the audit chain, undo
+ok 41 - R12-11 point-in-time restore: full access only, PIN + authenticator + typed RESTORE, 30-day window, durable log copied into the audit chain, undo
+  ---
+  duration_ms: 238.540193
+  type: 'test'
+  ...
+# Subtest: R12-12 backup export: full access only; complete records without sign-in secrets; fingerprint and audit-chain head included; the export is audited
+ok 42 - R12-12 backup export: full access only; complete records without sign-in secrets; fingerprint and audit-chain head included; the export is audited
+  ---
+  duration_ms: 104.071747
+  type: 'test'
+  ...
+# Subtest: R12-13 open portal: public info has no personal data; the name list only on a registered shop tablet; over HTTP without cookies
+ok 43 - R12-13 open portal: public info has no personal data; the name list only on a registered shop tablet; over HTTP without cookies
+  ---
+  duration_ms: 15.138219
+  type: 'test'
+  ...
+# Subtest: R12-14 go-live day (live mode, empty database): owner set up Friday morning, staff added with this week's Monday as start date can sign this week's report with one PIN
+ok 44 - R12-14 go-live day (live mode, empty database): owner set up Friday morning, staff added with this week's Monday as start date can sign this week's report with one PIN
+  ---
+  duration_ms: 182.605775
+  type: 'test'
+  ...
+1..44
+# tests 44
+# suites 0
+# pass 44
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 11040.784383
+api exit 0

@@ -1,0 +1,683 @@
+"""R1.2 browser acceptance tests (Playwright + Chromium + axe-core).
+
+Each test starts its own prototype server (fresh synthetic seed), so state
+never leaks between tests. Writes tests/ui-results.json and screenshots to
+tests/screens/.
+
+Run:  python3 tests/ui_test.py            (Node server)
+      HUB_BASE=http://127.0.0.1:8787/ python3 tests/ui_test.py   (an already
+      running server, e.g. `wrangler dev`; tests then share one state and the
+      per-test reset endpoint /api/dev/reset is used)
+"""
+import json, os, re, subprocess, sys, time, socket, traceback, urllib.request
+from pathlib import Path
+from playwright.sync_api import sync_playwright, expect
+
+ROOT = Path(__file__).resolve().parent.parent
+AXE = (ROOT / 'tests' / 'vendor' / 'axe.min.js').read_text()
+SHOTS = ROOT / 'tests' / 'screens'
+SHOTS.mkdir(exist_ok=True)
+RESULTS = []
+PAGES = []
+LAST_TOTP = {}
+EXTERNAL = os.environ.get('HUB_BASE')
+ONLY = set(sys.argv[1:])
+
+PHONE = {'width': 390, 'height': 844}
+TABLET = {'width': 820, 'height': 1180}
+NARROW = {'width': 320, 'height': 640}
+
+
+def free_port():
+    s = socket.socket(); s.bind(('127.0.0.1', 0)); p = s.getsockname()[1]; s.close(); return p
+
+
+def http(base, method, path, body=None):
+    req = urllib.request.Request(base.rstrip('/') + path, method=method, data=json.dumps(body or {}).encode() if method == 'POST' else None,
+                                 headers={'Content-Type': 'application/json', 'X-Hub-Request': '1'})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.loads(r.read())
+
+
+class Server:
+    def __enter__(self):
+        if EXTERNAL:
+            self.base = EXTERNAL
+            http(self.base, 'POST', '/api/dev/reset', {})
+            return self
+        self.port = free_port()
+        self.proc = subprocess.Popen(['node', '--no-warnings', 'server/server.js'], cwd=ROOT,
+                                     env={**os.environ, 'PORT': str(self.port), 'HUB_DEV_RESET': '1'}, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.base = f'http://127.0.0.1:{self.port}/'
+        for _ in range(240):
+            try:
+                urllib.request.urlopen(self.base + 'api/demo/status', timeout=1); break
+            except Exception:
+                time.sleep(0.25)
+        return self
+
+    def __exit__(self, *a):
+        if not EXTERNAL:
+            self.proc.terminate(); self.proc.wait()
+
+    def person(self, eid):
+        return next(p for p in http(self.base, 'GET', '/api/demo/people') if p['id'] == eid)
+
+
+
+
+def new_page(browser, viewport, errors):
+    ctx = browser.new_context(viewport=viewport, accept_downloads=True, has_touch=viewport['width'] < 900)
+    pg = ctx.new_page()
+    PAGES.append(pg)
+    pg.on('pageerror', lambda e: errors.append('pageerror: ' + str(e)))
+    pg.on('console', lambda m: errors.append('console: ' + m.text) if m.type == 'error' and 'Failed to load resource' not in m.text else None)
+    return ctx, pg
+
+
+def login(pg, srv, eid, keypad=False, shared=True, pin=None):
+    """Employee ID + PIN from any browser (no device registration). Management also gets the authenticator step."""
+    pg.goto(srv.base + '#/login')
+    pg.wait_for_selector('form[data-form=login]')
+    p = srv.person(eid)
+    pg.fill('input[name=employeeId]', eid)
+    secret = pin or p['pin'] or p.get('tempPin')
+    if keypad:
+        for d in secret:
+            pg.click(f'.keypad .key[data-key="{d}"][data-target="pin"]')
+    else:
+        pg.fill('#pin', secret)
+    box = pg.locator('input[name=sharedDevice]')
+    if box.is_checked() != shared:
+        box.set_checked(shared)
+    pg.click('form[data-form=login] button[type=submit]')
+    if p.get('totp'):
+        pg.wait_for_selector('input[name=totp]')
+        code = srv.person(eid)['totp']
+        while LAST_TOTP.get((srv.base, eid)) == code:   # codes are single-use (replay protection): wait for the next one
+            time.sleep(1); code = srv.person(eid)['totp']
+        LAST_TOTP[(srv.base, eid)] = code
+        pg.fill('input[name=totp]', code)
+        pg.click('form[data-form=login] button[type=submit]')
+    pg.wait_for_selector('.topbar')
+    pg.wait_for_selector('main h1')
+
+
+def signout(pg):
+    pg.click('.topbar [data-act=signout]')
+    pg.wait_for_selector('.portal-public, .login-card')
+
+
+def open_survey(pg):
+    """Staff land on this week's survey right after sign-in; otherwise use the big button on Home."""
+    if not pg.locator('#q-q1').count():
+        if not pg.locator('.big-action.primary').count():
+            pg.goto(pg.url.split('#')[0] + '#/home'); pg.wait_for_selector('.big-actions')
+        pg.click('.big-action.primary')
+    pg.wait_for_selector('#q-q1')
+
+
+def fill_survey(pg, pin, *, s1='', s2='', q4='no', keypad=False, comment='PRIVATE-COMMENT'):
+    open_survey(pg)
+    pg.click('label.opt:has(input[name=q1][value="4"])'); pg.click('[data-act=survey-next]')
+    pg.wait_for_selector('#q-q2')
+    pg.click('label.opt:has(input[name=q2][value="5"])'); pg.click('label.opt:has(input[name=q3][value=yes])'); pg.click(f'label.opt:has(input[name=q4][value={q4}])')
+    pg.click('[data-act=survey-next]')
+    pg.wait_for_selector('textarea[name=s1]')
+    if s1: pg.fill('textarea[name=s1]', s1)
+    if s2: pg.fill('textarea[name=s2]', s2)
+    if comment: pg.fill('textarea[name=s3]', comment)
+    pg.click('[data-act=survey-next]')
+    pg.wait_for_selector('form[data-form=sign]')
+    pg.check('input[name=affirm]')
+    if keypad:
+        for d in pin:
+            pg.click(f'.keypad .key[data-key="{d}"][data-target="signpin"]')
+    else:
+        pg.fill('#signpin', pin)
+
+
+def signoff(pg, srv, mgr_id):
+    pg.check('form[data-form=signoff] input[name=affirm]')
+    pg.fill('form[data-form=signoff] input[name=signPin]', srv.person(mgr_id)['pin'])
+    pg.click('form[data-form=signoff] button[type=submit]')
+    pg.wait_for_selector('text=Signed off.')
+
+
+def axe(pg, label):
+    if not pg.evaluate('typeof window.axe === "object"'):
+        pg.evaluate(AXE + '\n;0')  # DevTools evaluation: the page CSP stays fully enforced
+    res = pg.evaluate("""async () => { const r = await axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a','wcag2aa','wcag21a','wcag21aa','wcag22aa'] } });
+        return r.violations.map(v => ({ id: v.id, impact: v.impact, nodes: v.nodes.length, sample: v.nodes[0] && v.nodes[0].target.join(' ') })); }""")
+    assert not res, f'axe violations on {label}: {res}'
+    return label
+
+
+def no_hscroll(pg, label):
+    w = pg.evaluate('document.documentElement.scrollWidth - window.innerWidth')
+    assert w <= 1, f'horizontal scroll {w}px on {label}'
+
+
+def shot(pg, name):
+    pg.screenshot(path=str(SHOTS / f'{name}.png'), full_page=True)
+
+
+def test(name):
+    def deco(fn):
+        def run(browser):
+            if ONLY and name.split(' ')[0] not in ONLY:
+                return
+            errors, t0 = [], time.time()
+            try:
+                detail = fn(browser, errors)
+                assert not errors, f'browser errors: {errors[:5]}'
+                RESULTS.append({'name': name, 'ok': True, 'ms': int((time.time() - t0) * 1000), 'detail': detail})
+                print(f'PASS {name}')
+            except Exception as e:
+                RESULTS.append({'name': name, 'ok': False, 'error': f'{type(e).__name__}: {e}', 'trace': traceback.format_exc()[-1500:]})
+                print(f'FAIL {name}: {e}')
+                try:
+                    PAGES[-1].screenshot(path=str(SHOTS / f'FAIL-{name.split(" ")[0]}.png'), full_page=True)
+                except Exception:
+                    pass
+        run.__name__ = name
+        TESTS.append(run)
+        return run
+    return deco
+
+
+TESTS = []
+
+
+# ---------------------------------------------------------------------------
+@test('U1 end-to-end success flow (shared tablet staff -> management review -> safety -> verification -> employee record)')
+def t_e2e(browser, errors):
+    with Server() as srv:
+        ctx, pg = new_page(browser, TABLET, errors)
+        jordan = srv.person('E-107')
+        t0 = time.time()
+        login(pg, srv, 'E-107', keypad=True, shared=True)
+        assert '#/checkin/' in pg.url, 'staff land straight on the weekly survey'
+        expect(pg.locator('.shared-strip')).to_contain_text('Jordan Demo')
+        shot(pg, 'u1-01-tablet-lands-on-survey')
+        fill_survey(pg, jordan['pin'], s1='UI-TEST coolant leaking under CNC 2', s2='UI-TEST waiting on foam inserts', keypad=True, comment='')
+        expect(pg.locator('form[data-form=sign]')).to_contain_text('Signing as')
+        expect(pg.locator('input[name=typedName]')).to_have_count(0)
+        shot(pg, 'u1-02-tablet-sign')
+        pg.click('button[data-submit]')
+        pg.wait_for_selector('.success h1')
+        elapsed = round(time.time() - t0, 1)
+        expect(pg.locator('.sig-block')).to_contain_text('Jordan Demo')
+        expect(pg.locator('.sig-block')).to_contain_text('Unchanged since signing')
+        expect(pg.locator('#countdown')).to_be_visible()
+        shot(pg, 'u1-03-tablet-confirmation')
+        sub_id = pg.url.split('/record/')[1].split('?')[0]
+        pg.click('.success [data-act=signout]')
+        pg.wait_for_selector('.portal-public, .login-card')
+        ctx.close(); ctx, pg = new_page(browser, TABLET, errors)
+        login(pg, srv, 'E-102', shared=False)
+        assert '#/dash' in pg.url, 'management land on the dashboard'
+        pg.goto(srv.base + '#/team?tab=awaiting'); pg.wait_for_selector('main h1')
+        pg.click(f'a[href="#/record/{sub_id}"]')
+        pg.wait_for_selector('#review-panel')
+        expect(pg.locator('main')).to_contain_text('UI-TEST coolant')
+        pg.click('#review-panel summary:has-text("Create a corrective action")')
+        expect(pg.locator('#review-panel select[data-emp-select] option').first).to_be_attached()
+        pg.fill('#review-panel form[data-form=ca] input[name=title]', 'UI-TEST order foam inserts earlier')
+        pg.select_option('#review-panel form[data-form=ca] select[name=assignedTo]', 'E-102')
+        pg.click('#review-panel form[data-form=ca] button[type=submit]')
+        pg.wait_for_selector('text=Corrective actions from this report')
+        pg.fill('form[data-form=signoff] textarea[name=comments]', 'UI-TEST thanks Jordan, safety contact has the coolant leak.')
+        pg.click('form[data-form=signoff] label.opt:has(input[value=action_assigned])')
+        signoff(pg, srv, 'E-102')
+        expect(pg.locator('main')).to_contain_text('Closed — corrective action assigned')
+        shot(pg, 'u1-04-management-signed')
+        signout(pg)
+        login(pg, srv, 'E-103', shared=False)
+        pg.goto(srv.base + '#/safety?status=open'); pg.wait_for_selector('main h1')
+        pg.click('a.safety-item:has-text("UI-TEST coolant")')
+        pg.wait_for_selector('form[data-form=sack]')
+        pg.fill('form[data-form=sack] input[name=note]', 'Put drip tray down, maintenance called')
+        pg.click('form[data-form=sack] button[type=submit]')
+        pg.wait_for_selector('summary:has-text("Propose the fix is done")')
+        pg.click('summary:has-text("Propose the fix is done")')
+        pg.fill('form[data-form=propose] textarea[name=resolution]', 'UI-TEST replaced coolant line fitting')
+        pg.click('form[data-form=propose] button[type=submit]')
+        pg.wait_for_selector('text=You proposed this fix')
+        report_url = pg.url
+        shot(pg, 'u1-05-safety-proposed')
+        signout(pg)
+        login(pg, srv, 'E-101', shared=False)
+        pg.goto(report_url); pg.wait_for_selector('form[data-form=sverify]')
+        pg.fill('form[data-form=sverify] input[name=note]', 'Checked the line, dry')
+        pg.click('form[data-form=sverify] button[value=close]')
+        pg.wait_for_selector('text=Verified and closed')
+        pg.goto(srv.base + '#/dash'); pg.wait_for_selector('#dash-table')
+        expect(pg.locator('#dash-table')).to_contain_text('Jordan Demo')
+        shot(pg, 'u1-06-dashboard')
+        signout(pg)
+        ctx.close(); ctx, pg = new_page(browser, PHONE, errors)
+        login(pg, srv, 'E-107', shared=False)          # own phone, any browser
+        pg.goto(srv.base + f'#/record/{sub_id}'); pg.wait_for_selector('.sig-block')
+        expect(pg.locator('main')).to_contain_text('UI-TEST thanks Jordan')
+        pg.click('[data-act=seen]')
+        pg.wait_for_selector('.success-inline')
+        with pg.expect_download() as dl:
+            pg.click('[data-act=download][data-fmt=json]')
+        data = json.loads(Path(dl.value.path()).read_text())
+        sig = data['original']['payload']['signature']
+        assert sig['signerName'] == 'Jordan Demo' and 'acknowledgment' in sig['method'] and 'typedName' not in sig
+        assert any(a['answer'] == 4 for a in data['original']['payload']['answers'])
+        pg.goto(srv.base + '#/safety'); pg.wait_for_selector('main h1')
+        expect(pg.locator('main')).to_contain_text('Resolved')
+        no_hscroll(pg, 'phone safety')
+        shot(pg, 'u1-07-phone-record')
+        ctx.close()
+        return {'submission': sub_id, 'tabletSignInToSubmittedSeconds': elapsed}
+
+
+@test('U2 shared tablet: auto sign-out after submit, idle sign-out, nothing private left behind')
+def t_shared(browser, errors):
+    with Server() as srv:
+        ctx, pg = new_page(browser, TABLET, errors)
+        jordan = srv.person('E-107')
+        login(pg, srv, 'E-107', shared=True)
+        fill_survey(pg, jordan['pin'], keypad=True)
+        pg.click('button[data-submit]')
+        pg.wait_for_selector('#countdown')
+        pg.wait_for_selector('.portal-public, .login-card', timeout=26000)
+        pg.goto(srv.base + '#/checkin')
+        pg.wait_for_selector('.login-card')
+        assert 'PRIVATE-COMMENT' not in pg.content()
+        storage = pg.evaluate('JSON.stringify(localStorage) + JSON.stringify(sessionStorage)')
+        assert 'PRIVATE' not in storage and 'hub_session' not in storage and len(storage) < 40, storage
+        cookies = {c['name']: c for c in ctx.cookies()}
+        assert 'hub_session' not in cookies or not cookies['hub_session']['value'], cookies
+        r = pg.request.post(srv.base + 'api/call/survey.mine', headers={'X-Hub-Request': '1'}, data='{}')
+        assert r.status == 401
+        pg.clock.install()
+        login(pg, srv, 'E-104', shared=True)
+        pg.clock.run_for(4 * 60 * 1000 + 5000)
+        expect(pg.locator('#idle')).to_be_visible()
+        pg.clock.run_for(70 * 1000)
+        pg.wait_for_selector('.portal-public, .login-card')
+        ctx.close()
+        return 'auto sign-out + idle sign-out verified'
+
+
+@test('U3 Spanish employee on a 320px phone: full report, no horizontal scroll, axe clean')
+def t_spanish(browser, errors):
+    with Server() as srv:
+        ctx, pg = new_page(browser, NARROW, errors)
+        maria = srv.person('E-104')
+        login(pg, srv, 'E-104', shared=False)
+        assert pg.evaluate('document.documentElement.lang') == 'es'
+        expect(pg.locator('#q-q1 legend')).to_contain_text('productividad')
+        no_hscroll(pg, 'es step1'); axe(pg, 'es step1')
+        shot(pg, 'u3-01-es-320-step1')
+        pg.click('[data-act=survey-next]')
+        expect(pg.locator('#err-q1')).to_be_visible()
+        pg.goto(srv.base + '#/home'); pg.wait_for_selector('.big-actions')
+        no_hscroll(pg, 'es home'); axe(pg, 'es home')
+        shot(pg, 'u3-02-es-320-home')
+        fill_survey(pg, maria['pin'], keypad=False)
+        no_hscroll(pg, 'es sign'); axe(pg, 'es sign')
+        pg.click('button[data-submit]')
+        pg.wait_for_selector('.success h1')
+        no_hscroll(pg, 'es confirmation'); axe(pg, 'es confirmation')
+        pg.goto(srv.base + '#/safety/new'); pg.wait_for_selector('form[data-form=safety]')
+        no_hscroll(pg, 'es safety'); axe(pg, 'es safety')
+        ctx.close()
+        return 'es @320px ok'
+
+
+@test('U4 accessibility: axe on every main screen (light + dark), phone and tablet')
+def t_axe(browser, errors):
+    checked = []
+    with Server() as srv:
+        for vp_name, vp in [('phone', PHONE), ('tablet', TABLET)]:
+            for scheme in ['light', 'dark']:
+                ctx = browser.new_context(viewport=vp, color_scheme=scheme)
+                pg = ctx.new_page(); PAGES.append(pg)
+                pg.on('pageerror', lambda e: errors.append(str(e)))
+                pg.goto(srv.base); pg.wait_for_selector('.portal-public')
+                checked.append(axe(pg, f'open portal {vp_name} {scheme}'))
+                pg.goto(srv.base + '#/login'); pg.wait_for_selector('.login-card')
+                checked.append(axe(pg, f'login {vp_name} {scheme}'))
+                login(pg, srv, 'E-101', shared=False)
+                for h in ['#/dash', '#/dash?view=month', '#/dash?view=history', '#/team', '#/team?tab=missing', '#/safety', '#/actions', '#/safety/new',
+                          '#/accounts', '#/alerts', '#/more', '#/admin', '#/admin?tab=delivery', '#/checkin']:
+                    pg.goto(srv.base + h); pg.wait_for_selector('main h1'); pg.wait_for_timeout(150)
+                    no_hscroll(pg, f'{h} {vp_name}')
+                    checked.append(axe(pg, f'{h} {vp_name} {scheme}'))
+                pg.goto(srv.base + '#/accounts'); pg.wait_for_selector('main h1')
+                pg.click('#new-account summary'); checked.append(axe(pg, f'new account form {vp_name} {scheme}'))
+                pg.goto(srv.base + '#/safety?status=all'); pg.wait_for_selector('main h1')
+                pg.click('a.safety-item >> nth=0'); pg.wait_for_selector('text=Who was alerted')
+                checked.append(axe(pg, f'safety detail {vp_name} {scheme}'))
+                pg.goto(srv.base + '#/dash'); pg.wait_for_selector('#dash-table')
+                pg.click('#dash-table a >> nth=0'); pg.wait_for_selector('.sig-block')
+                checked.append(axe(pg, f'record {vp_name} {scheme}'))
+                if vp_name == 'tablet' and scheme == 'light':
+                    shot(pg, 'u4-record-management')
+                signout(pg)
+                login(pg, srv, 'E-106', shared=False)
+                for h in ['#/home', '#/checkin', '#/safety', '#/more']:
+                    pg.goto(srv.base + h); pg.wait_for_selector('main h1'); pg.wait_for_timeout(150)
+                    no_hscroll(pg, f'staff {h} {vp_name}')
+                    checked.append(axe(pg, f'staff {h} {vp_name} {scheme}'))
+                if vp_name == 'phone' and scheme == 'light':
+                    pg.goto(srv.base + '#/home'); pg.wait_for_selector('.big-actions'); shot(pg, 'u4-staff-home-phone')
+                ctx.close()
+    return f'{len(checked)} screen checks'
+
+
+@test('U5 keyboard only: sign in, complete, sign and submit without a pointer')
+def t_keyboard(browser, errors):
+    with Server() as srv:
+        ctx, pg = new_page(browser, TABLET, errors)
+        pg.goto(srv.base + '#/login'); pg.wait_for_selector('form[data-form=login]')
+        p = srv.person('E-105')
+        pg.focus('input[name=employeeId]'); pg.keyboard.type('E-105')
+        pg.keyboard.press('Tab'); pg.keyboard.type(p['pin']); pg.keyboard.press('Enter')
+        pg.wait_for_selector('#q-q1')
+        assert pg.evaluate("document.querySelector('a[href], button, input, select, textarea, [tabindex]:not([tabindex=\"-1\"])').className") == 'skip'
+        def choose(name, value):
+            pg.focus(f'input[name={name}] >> nth=0')
+            pg.keyboard.press('Space')
+            while pg.evaluate(f"document.querySelector('input[name={name}]:checked')?.value") != str(value):
+                pg.keyboard.press('ArrowDown')
+        choose('q1', 3)
+        pg.focus('[data-act=survey-next]'); pg.keyboard.press('Enter')
+        pg.wait_for_selector('#q-q2')
+        choose('q2', 4); choose('q3', 'no'); choose('q4', 'no')
+        pg.focus('[data-act=survey-next]'); pg.keyboard.press('Enter')
+        pg.wait_for_selector('textarea[name=s1]')
+        pg.focus('[data-act=survey-next]'); pg.keyboard.press('Enter')
+        pg.wait_for_selector('form[data-form=sign]')
+        pg.focus('input[name=affirm]'); pg.keyboard.press('Space')
+        pg.keyboard.press('Tab'); pg.keyboard.type(p['pin'])
+        pg.keyboard.press('Enter')
+        pg.wait_for_selector('.success h1')
+        assert pg.evaluate('document.activeElement.tagName') in ('H1', 'MAIN')
+        ctx.close()
+        return 'keyboard completion ok'
+
+
+@test('U6 network failure during submit keeps the answers; retry is idempotent (one record)')
+def t_network(browser, errors):
+    with Server() as srv:
+        ctx, pg = new_page(browser, PHONE, errors)
+        p = srv.person('E-107')
+        login(pg, srv, 'E-107', shared=False)
+        fill_survey(pg, p['pin'], s2='UI-TEST obstacle')
+        state = {'n': 0}
+
+        def flaky(route):
+            state['n'] += 1
+            if state['n'] == 1:
+                return route.abort('internetdisconnected')
+            if state['n'] == 2:
+                route.fetch(); return route.abort('connectionreset')
+            return route.continue_()
+        pg.route('**/api/call/survey.submit', flaky)
+
+        def attempt(n):
+            pg.click('button[data-submit]')
+            while state['n'] < n:
+                pg.wait_for_timeout(50)
+        attempt(1)
+        expect(pg.locator('button[data-submit]')).to_be_enabled()
+        expect(pg.locator('form[data-form=sign] .alert')).to_be_visible()
+        expect(pg.locator('dl.review')).to_contain_text('PRIVATE-COMMENT')
+        assert pg.is_checked('input[name=affirm]')
+        assert pg.input_value('#signpin') == ''
+        pg.fill('#signpin', p['pin'])
+        attempt(2)
+        expect(pg.locator('button[data-submit]')).to_be_enabled()
+        expect(pg.locator('form[data-form=sign] .alert')).to_be_visible()
+        pg.fill('#signpin', p['pin'])
+        attempt(3)
+        pg.wait_for_selector('.success h1')
+        assert state['n'] == 3
+        mine = pg.evaluate("fetch('/api/call/survey.mine',{method:'POST',headers:{'Content-Type':'application/json','X-Hub-Request':'1'},body:'{}'}).then(r=>r.json())")
+        weeks = [m['weekId'] for m in mine if m.get('submissionId')]
+        assert len(weeks) == len(set(weeks)), weeks
+        ctx.close()
+        return {'attempts': state['n']}
+
+
+@test('U7 temporary PIN first sign-in, PIN change, and wrong-PIN lockout message')
+def t_setup(browser, errors):
+    with Server() as srv:
+        ctx, pg = new_page(browser, PHONE, errors)
+        nina = srv.person('E-110')
+        assert re.fullmatch(r'\d{8}', nina['tempPin'])
+        pg.goto(srv.base + '#/login'); pg.wait_for_selector('form[data-form=login]')
+        pg.fill('input[name=employeeId]', 'E-110'); pg.fill('#pin', nina['tempPin'])     # temporary PIN goes in the normal PIN field
+        pg.locator('input[name=sharedDevice]').set_checked(False)
+        pg.click('form[data-form=login] button[type=submit]')
+        pg.wait_for_selector('form[data-form=setpin]')
+        axe(pg, 'set PIN')
+        pg.fill('#np', '123456'); pg.fill('#cp', '123456'); pg.click('form[data-form=setpin] button[type=submit]')
+        expect(pg.locator('.alert')).to_be_visible()
+        pg.fill('#np', '73024185'); pg.fill('#cp', '73024185'); pg.click('form[data-form=setpin] button[type=submit]')
+        pg.wait_for_selector('.big-actions')      # her first week is a partial week, so she lands on Home
+        signout(pg)
+        login(pg, srv, 'E-110', pin='73024185', shared=False)      # the new PIN works
+        signout(pg)
+        pg.goto(srv.base + '#/login'); pg.wait_for_selector('form[data-form=login]')
+        for i in range(5):
+            pg.fill('input[name=employeeId]', 'E-108'); pg.fill('#pin', '000000')
+            with pg.expect_response('**/api/login'):
+                pg.click('form[data-form=login] button[type=submit]')
+            pg.wait_for_selector('.alert')
+        txt = pg.inner_text('.alert')
+        assert re.search(r'too many|demasiad|15', txt, re.I), txt
+        ctx.close()
+        return 'temporary PIN + lockout ok'
+
+
+@test('U8 clarification loop: employee answers the question, management signs off, employee marks it seen')
+def t_clarify(browser, errors):
+    with Server() as srv:
+        ctx, pg = new_page(browser, TABLET, errors)
+        login(pg, srv, 'E-104', shared=True)
+        pg.goto(srv.base + '#/home'); pg.wait_for_selector('.big-actions')
+        pg.click('a.todo.urgent[href^="#/record/"]')
+        pg.wait_for_selector('form[data-form=respond]')
+        sub = pg.url.split('/record/')[1].split('?')[0]
+        pg.fill('form[data-form=respond] >> nth=0 >> textarea', 'UI-TEST fue el lunes, ya está bien')
+        pg.click('form[data-form=respond] >> nth=0 >> button[type=submit]')
+        pg.wait_for_selector('.timeline')
+        expect(pg.locator('.timeline')).to_contain_text('UI-TEST fue el lunes')
+        signout(pg)
+        login(pg, srv, 'E-102', shared=False)
+        pg.goto(srv.base + '#/team?tab=needsResponse'); pg.wait_for_selector('main h1')
+        pg.click('a.link-row:has-text("Maria Sample")')
+        pg.wait_for_selector('form[data-form=signoff]')
+        signoff(pg, srv, 'E-102')
+        signout(pg)
+        login(pg, srv, 'E-104', shared=True)
+        pg.goto(srv.base + '#/record/' + sub); pg.wait_for_selector('.seen-box')
+        expect(pg.locator('.seen-box')).to_contain_text('no significa')
+        pg.click('[data-act=seen]'); pg.wait_for_selector('.success-inline')
+        ctx.close()
+        return 'clarification loop ok'
+
+
+@test('U9 management adds an employee; the new person signs in on a phone with the temporary PIN, sets a PIN and signs the survey')
+def t_accounts(browser, errors):
+    with Server() as srv:
+        ctx, pg = new_page(browser, TABLET, errors)
+        login(pg, srv, 'E-101', shared=False)
+        pg.goto(srv.base + '#/accounts'); pg.wait_for_selector('main h1')
+        pg.click('#new-account summary')
+        pg.fill('form[data-form=acreate] input[name=name]', 'Uma Newstart')
+        pg.fill('form[data-form=acreate] input[name=startDate]', '2026-10-01')
+        pg.select_option('form[data-form=acreate] select[name=reportsTo]', 'E-102')
+        pg.click('form[data-form=acreate] button[type=submit]')
+        pg.wait_for_selector('.acct-out .code')
+        temp = pg.inner_text('.acct-out .code').strip()
+        assert re.fullmatch(r'\d{8}', temp), temp
+        new_id = pg.locator('.acct-out .code').locator('xpath=ancestor::article').get_attribute('id').replace('acct-', '')
+        shot(pg, 'u9-01-account-created')
+        pg.fill('form[data-form=regdevice] input[name=label]', 'UI-TEST tablet')      # optional shop-tablet registration
+        pg.click('form[data-form=regdevice] button[type=submit]')
+        expect(pg.locator('#tablets')).to_contain_text('UI-TEST tablet')
+        signout(pg)
+        ctx.close(); ctx, pg = new_page(browser, PHONE, errors)
+        t0 = time.time()
+        pg.goto(srv.base + '#/login'); pg.wait_for_selector('form[data-form=login]')
+        pg.fill('input[name=employeeId]', new_id); pg.fill('#pin', temp)
+        pg.locator('input[name=sharedDevice]').set_checked(False)
+        pg.click('form[data-form=login] button[type=submit]')
+        pg.wait_for_selector('form[data-form=setpin]')
+        pg.fill('#np', '58302719'); pg.fill('#cp', '58302719'); pg.click('form[data-form=setpin] button[type=submit]')
+        pg.wait_for_selector('#q-q1')
+        fill_survey(pg, '58302719', comment='')
+        expect(pg.locator('form[data-form=sign]')).to_contain_text('agree to sign electronically')
+        expect(pg.locator('.consent-text')).to_contain_text('Choosing paper will not affect your job')   # the exact versioned consent text
+        expect(pg.locator('.consent-text')).to_contain_text('esign-consent-2')
+        pg.click('button[data-submit]')
+        pg.wait_for_selector('.success h1')
+        secs = round(time.time() - t0, 1)
+        shot(pg, 'u9-02-new-person-signed')
+        ctx.close()
+        return {'newEmployeeId': new_id, 'firstSignInToSignedSeconds': secs}
+
+
+@test('U10 outside work hours: the weekly report waits for the next shift; safety reports still work')
+def t_closed(browser, errors):
+    with Server() as srv:
+        http(srv.base, 'POST', '/api/dev/tick', {'advanceMinutes': 360})      # Friday 10:30 -> 16:30, after the shift
+        ctx, pg = new_page(browser, PHONE, errors)
+        login(pg, srv, 'E-107', shared=False)
+        pg.wait_for_selector('.big-action.closed')
+        assert '#/home' in pg.url
+        expect(pg.locator('.big-action.closed')).to_contain_text('Available during work hours')
+        no_hscroll(pg, 'closed home'); axe(pg, 'closed home')
+        shot(pg, 'u10-01-after-hours-home')
+        pg.goto(srv.base + '#/checkin'); pg.wait_for_selector('main h1')
+        pg.click('a.btn.primary[href^="#/checkin/"]') if pg.locator('a.btn.primary[href^="#/checkin/"]').count() else None
+        pg.wait_for_selector('.closed-note')
+        expect(pg.locator('.closed-note')).to_contain_text('paid time')
+        expect(pg.locator('form[data-form=survey-step]')).to_have_count(0)
+        pg.goto(srv.base + '#/safety/new'); pg.wait_for_selector('form[data-form=safety]')
+        pg.click('label.opt:has(input[name=type][value=hazard])')
+        pg.fill('textarea[name=description]', 'UI-TEST after-hours hazard')
+        pg.click('form[data-form=safety] button[type=submit]')
+        pg.wait_for_selector('.success h1')
+        ctx.close()
+        return 'closed window + safety report ok'
+
+
+
+@test('U11 full-access manager: Restore & backup page; backup downloads a complete copy without sign-in secrets')
+def t_restore_backup(browser, errors):
+    with Server() as srv:
+        ctx, pg = new_page(browser, TABLET, errors)
+        login(pg, srv, 'E-101', shared=False)
+        pg.goto(srv.base + '#/admin?tab=restore'); pg.wait_for_selector('button[data-act=backup]')
+        on_cloudflare = pg.locator('form[data-form=restore]').count() == 1
+        if not on_cloudflare:
+            expect(pg.locator('.alert-soft')).to_contain_text('only on Cloudflare')
+        axe(pg, 'restore page'); no_hscroll(pg, 'restore page')
+        shot(pg, 'u11-01-restore-backup')
+        with pg.expect_download() as d:
+            pg.click('button[data-act=backup]')
+        path = d.value.path()
+        body = open(path, encoding='utf-8').read()
+        b = json.loads(body)
+        assert b['format'] == 'tag-employee-hub-backup-1' and b['counts']['survey_submissions'] > 0
+        assert 'pin_hash' not in body and 'totp_secret' not in body and 'enc1:' not in body
+        expect(pg.locator('#backup-out')).to_contain_text('signed reports')
+        ctx.close()
+        # Management without full access does not get the page.
+        ctx, pg = new_page(browser, TABLET, errors)
+        login(pg, srv, 'E-102', shared=False)
+        pg.goto(srv.base + '#/admin?tab=restore'); pg.wait_for_selector('nav.subtabs')
+        expect(pg.locator('nav.subtabs a[href="#/admin?tab=restore"]')).to_have_count(0)
+        expect(pg.locator('button[data-act=backup]')).to_have_count(0)
+        ctx.close()
+        return {'restoreForm': 'shown (Cloudflare runtime)' if on_cloudflare else 'unavailable note (Node)', 'backupSubmissions': b['counts']['survey_submissions']}
+
+
+def quick_answer_all(pg):
+    """Open-portal report: answer every question with the first option, then go to the sign step."""
+    for _ in range(6):
+        pg.wait_for_selector('form[data-form=survey-step], form[data-form=qsign]')
+        if pg.locator('form[data-form=qsign]').count():
+            return
+        for fs in pg.locator('fieldset.q').all():
+            fs.locator('label.opt').last.click()       # last option: lowest rating / "No"
+        pg.click('[data-act=survey-next]')
+    raise AssertionError('did not reach the sign step')
+
+
+@test('U12 open portal: no sign-in screen; the weekly report asks for the PIN once, at signing; phone remembers the ID; shop tablet shows names')
+def t_open_portal(browser, errors):
+    with Server() as srv:
+        ctx, pg = new_page(browser, PHONE, errors)
+        pg.goto(srv.base); pg.wait_for_selector('.portal-public')
+        names = [srv.person(e)['name'] for e in ('E-104', 'E-107')]
+        # (the demo copy lists its invented people in a labelled demo panel; production has no such panel)
+        outside_demo = pg.evaluate("(() => { const c = document.querySelector('.portal-public').cloneNode(true); c.querySelectorAll('.demo-panel').forEach(d => d.remove()); return c.innerText; })()")
+        assert not any(n in outside_demo for n in names), 'portal must not list employees on the open web'
+        axe(pg, 'open portal'); no_hscroll(pg, 'open portal'); shot(pg, 'u12-01-open-portal')
+        # Weekly report: ID -> questions -> PIN once.
+        pg.click('a.big-action.primary'); pg.wait_for_selector('form[data-form=who]')
+        pg.fill('input[name=employeeId]', 'e-107'); pg.click('form[data-form=who] button[type=submit]')
+        quick_answer_all(pg)
+        axe(pg, 'quick sign step'); shot(pg, 'u12-02-quick-sign')
+        jordan = srv.person('E-107')
+        # Wrong PIN: refused, nothing signed, the person can try again.
+        pg.check('form[data-form=qsign] input[name=affirm]'); pg.fill('#signpin', '000000'); pg.click('button[data-submit]')
+        pg.wait_for_selector('form[data-form=qsign] .alert')
+        assert '#/record/' not in pg.url
+        pg.check('form[data-form=qsign] input[name=affirm]')
+        for d in jordan['pin']:
+            pg.click(f'.keypad .key[data-key="{d}"][data-target="signpin"]')
+        pg.click('button[data-submit]')
+        pg.wait_for_url('**/#/record/**', timeout=15000)
+        pg.wait_for_selector('.sig-block')
+        expect(pg.locator('.sig-block')).to_contain_text(jordan['name'])
+        expect(pg.locator('.sig-block')).to_contain_text('Unchanged since signing')
+        assert pg.evaluate("localStorage.getItem('hub_last_id')") == 'E-107'
+        # Signed in only for this report on a shared basis: signing out returns to the open portal.
+        pg.click('.topbar [data-act=signout]'); pg.wait_for_selector('.portal-public')
+        r = pg.request.post(srv.base + 'api/call/survey.mine', headers={'X-Hub-Request': '1'}, data='{}')
+        assert r.status == 401
+        # Next time the phone already knows the ID.
+        pg.goto(srv.base + '#/r'); pg.wait_for_selector('form[data-form=who]')
+        assert pg.input_value('input[name=employeeId]') == 'E-107'
+        ctx.close()
+        # Registered shop tablet: tap your name instead of typing an ID.
+        ctx, pg = new_page(browser, TABLET, errors)
+        pg.goto(srv.base); pg.wait_for_selector('.portal-public')
+        rr = pg.request.post(srv.base + 'api/demo/kiosk', headers={'X-Hub-Request': '1'}, data=json.dumps({'on': True}))
+        assert rr.status == 200, rr.status
+        pg.goto(srv.base + '#/r'); pg.reload(); pg.wait_for_selector('.name-grid .name-btn')
+        maria = srv.person('E-104')
+        axe(pg, 'tablet name grid'); shot(pg, 'u12-03-tablet-names')
+        pg.click(f'.name-btn[data-id="E-104"]')
+        quick_answer_all(pg)
+        expect(pg.locator('.signing-as')).to_contain_text(maria['name'])
+        pg.check('form[data-form=qsign] input[name=affirm]'); pg.fill('#signpin', maria['pin']); pg.click('button[data-submit]')
+        pg.wait_for_url('**/#/record/**', timeout=15000)
+        expect(pg.locator('#countdown')).to_be_visible()       # shared tablet: signs itself out
+        assert pg.evaluate("localStorage.getItem('hub_last_id')") is None, 'tablets must not remember who signed last'
+        ctx.close()
+        return 'phone (typed ID, remembered) and shop tablet (name grid) both sign with one PIN entry'
+
+if __name__ == '__main__':
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        for t in TESTS:
+            t(browser)
+        browser.close()
+    out = ROOT / 'tests' / ('ui-results-workers.json' if EXTERNAL else 'ui-results.json')
+    out.write_text(json.dumps({'ranAt': time.strftime('%Y-%m-%dT%H:%M:%S%z'), 'base': EXTERNAL or 'node server/server.js', 'results': RESULTS}, indent=2))
+    ok = sum(r['ok'] for r in RESULTS)
+    print(f'{ok}/{len(RESULTS)} UI tests passed')
+    sys.exit(0 if ok == len(RESULTS) else 1)

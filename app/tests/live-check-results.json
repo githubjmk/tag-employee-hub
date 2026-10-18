@@ -1,0 +1,71 @@
+{
+  "base": "https://tag-employee-hub-test.joshua-kaye.workers.dev",
+  "ranAt": "2026-10-14T22:00:55-0700",
+  "results": [
+    {
+      "name": "L1 security headers on the live address",
+      "ok": true,
+      "detail": "CSP, frame and nosniff headers on the page and script, served over HTTPS"
+    },
+    {
+      "name": "L2 request checks enforced",
+      "ok": true,
+      "detail": "403 without the request header, 413 oversize, 401 when not signed in"
+    },
+    {
+      "name": "L3 reset and clock endpoints are switched off",
+      "ok": true,
+      "detail": {
+        "/api/dev/reset": 404,
+        "/api/dev/tick": 404
+      }
+    },
+    {
+      "name": "L4 staff sign-in with ID + PIN; cookie flags",
+      "ok": true,
+      "detail": "session cookie is HttpOnly, Secure, SameSite=Strict"
+    },
+    {
+      "name": "L5 sign and submit the weekly report; retry is idempotent; record verifies",
+      "ok": true,
+      "detail": {
+        "submission": "SUB-702E765730",
+        "retrySameRecord": true,
+        "integrity": "verified"
+      }
+    },
+    {
+      "name": "L6 staff cannot open management screens",
+      "ok": true,
+      "detail": "staff get 403 on Employee Accounts"
+    },
+    {
+      "name": "L7 wrong PIN refused",
+      "ok": true,
+      "detail": "wrong PIN refused (401); correct PIN then accepted"
+    },
+    {
+      "name": "L8 management sign-in requires the authenticator code",
+      "ok": true,
+      "detail": "without authenticator code: ?; with code: signed in"
+    },
+    {
+      "name": "L9 audit hash chain and signed records verify on the live copy",
+      "ok": true,
+      "detail": {
+        "auditEvents": 216,
+        "signedRecordsChecked": 111
+      }
+    },
+    {
+      "name": "L10 scheduler runs on its own in Cloudflare (urgent report escalates when unacknowledged)",
+      "ok": true,
+      "detail": {
+        "report": "SR-7722C5E6E4",
+        "escalationsQueued": 2,
+        "minutesWaited": 15.1,
+        "firstEscalationAt": "2026-10-16T17:48:00.157Z"
+      }
+    }
+  ]
+}

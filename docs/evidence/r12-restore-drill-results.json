@@ -1,0 +1,56 @@
+{
+  "base": "https://tag-employee-hub-test.joshua-kaye.workers.dev",
+  "ranAt": "2026-10-14T22:47:21-0700",
+  "steps": [
+    {
+      "step": "restore available on the live copy",
+      "detail": {
+        "pastRestores": 0
+      }
+    },
+    {
+      "step": "noted T0",
+      "detail": "2026-10-15T05:44:43+00:00"
+    },
+    {
+      "step": "sample change made after T0",
+      "detail": "DRILL-A21B3C"
+    },
+    {
+      "step": "restore requested",
+      "detail": {
+        "restoreId": "RS-19BAC8C522",
+        "bookmark": "00000000-000000e0-00\u2026"
+      }
+    },
+    {
+      "step": "Hub back after restart",
+      "detail": "6.1 s"
+    },
+    {
+      "step": "sample change is gone",
+      "detail": "DRILL-A21B3C absent"
+    },
+    {
+      "step": "restore logged and audit chain verifies",
+      "detail": {
+        "auditEvents": 227,
+        "latestRestore": "RS-19BAC8C522"
+      }
+    },
+    {
+      "step": "undo requested",
+      "detail": "RS-DB9444B3FA"
+    },
+    {
+      "step": "undo worked: sample change is back; chain verifies",
+      "detail": {
+        "restartSeconds": 6.2,
+        "restoresLogged": [
+          "RS-DB9444B3FA",
+          "RS-19BAC8C522"
+        ]
+      }
+    }
+  ]
+}

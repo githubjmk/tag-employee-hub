@@ -1,0 +1,89 @@
+# Default (no --env): LOCAL DEVELOPMENT ONLY with `wrangler dev`.
+# `--env test`: the approved separate test copy (sample data only) — `wrangler deploy --env test`.
+# `--env production`: the live Hub at hub.innerspacecases.com (owner go-ahead 2026-10-15). Empty database, real time, no sample people.
+name = "tag-employee-hub-r12-dev"
+main = "worker.js"
+compatibility_date = "2025-06-01"
+workers_dev = false            # local config never publishes
+
+[assets]
+directory = "../web"
+binding = "ASSETS"
+run_worker_first = true        # every response gets the security headers from the Worker
+
+[[durable_objects.bindings]]
+name = "HUB"
+class_name = "Hub"
+
+[[durable_objects.bindings]]
+name = "RESTORE_LOG"
+class_name = "RestoreLog"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Hub"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["RestoreLog"]
+
+[vars]
+HUB_DEMO = "1"                 # synthetic data only
+HUB_DEV_RESET = "1"            # enables /api/dev/reset and /api/dev/tick (local only)
+# HUB_PEPPER is a secret: .dev.vars locally.
+
+# ---------------------------------------------------------------- test copy (approved 2026-10-14)
+[env.test]
+name = "tag-employee-hub-test"
+workers_dev = true             # https://tag-employee-hub-test.<account>.workers.dev — sample data only
+
+[env.test.assets]
+directory = "../web"
+binding = "ASSETS"
+run_worker_first = true
+
+[[env.test.durable_objects.bindings]]
+name = "HUB"
+class_name = "Hub"
+
+[[env.test.durable_objects.bindings]]
+name = "RESTORE_LOG"
+class_name = "RestoreLog"
+
+[env.test.vars]
+HUB_DEMO = "1"                 # invented people only; nothing real goes into the test copy
+HUB_DEV_RESET = "0"            # no reset endpoint on a reachable URL
+HUB_SECURE_COOKIES = "1"
+TURNSTILE_SITE_KEY = "0x4AAAAAAFYGcmWisZSw7KWk"   # public site key (widget "TAG Employee Hub"); the secret is a Worker secret
+# Secrets (wrangler secret put <NAME> --env test):
+#   HUB_PEPPER (required)
+#   TURNSTILE_SITE_KEY / TURNSTILE_SECRET            bot check on sign-in (optional in the test copy)
+#   GOTO_CLIENT_ID / GOTO_CLIENT_SECRET / GOTO_REFRESH_TOKEN / GOTO_OWNER_NUMBER / GOTO_WEBHOOK_SECRET
+
+# ---------------------------------------------------------------- live Hub (owner go-ahead 2026-10-15)
+# Deploy with deploy-live.sh. Real employee data lives only here, never in the test copy.
+[env.production]
+name = "tag-employee-hub"
+workers_dev = true             # backup address https://tag-employee-hub.joshua-kaye.workers.dev
+routes = [ { pattern = "hub.innerspacecases.com", custom_domain = true } ]
+
+[env.production.assets]
+directory = "../web"
+binding = "ASSETS"
+run_worker_first = true
+
+[[env.production.durable_objects.bindings]]
+name = "HUB"
+class_name = "Hub"
+
+[[env.production.durable_objects.bindings]]
+name = "RESTORE_LOG"
+class_name = "RestoreLog"
+
+[env.production.vars]
+HUB_DEMO = "0"                 # real clock, empty database, first account through /api/setup
+HUB_DEV_RESET = "0"
+HUB_SECURE_COOKIES = "1"
+HUB_PILOT_START_WEEK = "2026-10-12"   # weeks before this are the paper era (never "missing")
+# Secrets (set by deploy-live.sh): HUB_PEPPER, HUB_BOOTSTRAP_CODE, and, once the widget lists
+# hub.innerspacecases.com, TURNSTILE_SITE_KEY + TURNSTILE_SECRET.

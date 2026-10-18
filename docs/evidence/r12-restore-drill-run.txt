@@ -1,0 +1,12 @@
+OK   restore available on the live copy - {'pastRestores': 0}
+OK   noted T0 - 2026-10-15T05:44:43+00:00
+OK   sample change made after T0 - DRILL-A21B3C
+OK   restore requested - {'restoreId': 'RS-19BAC8C522', 'bookmark': '00000000-000000e0-00…'}
+OK   Hub back after restart - 6.1 s
+OK   sample change is gone - DRILL-A21B3C absent
+OK   restore logged and audit chain verifies - {'auditEvents': 227, 'latestRestore': 'RS-19BAC8C522'}
+OK   undo requested - RS-DB9444B3FA
+OK   undo worked: sample change is back; chain verifies - {'restartSeconds': 6.2, 'restoresLogged': ['RS-DB9444B3FA', 'RS-19BAC8C522']}
+Restore drill passed
+drill exit 0
+[('security.secrets_sealed', 'employees'), ('system.restored', 'RS-19BAC8C522'), ('system.restored', 'RS-DB9444B3FA')]

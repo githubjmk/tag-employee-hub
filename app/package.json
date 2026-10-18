@@ -1,0 +1,13 @@
+{
+  "name": "tag-employee-hub-r1-2",
+  "version": "1.2.0-demo",
+  "private": true,
+  "type": "module",
+  "description": "TAG Employee Hub R1.2 — weekly report prototype (simplified sign-in). Synthetic data, no production integrations.",
+  "scripts": {
+    "start": "node --no-warnings server/server.js",
+    "test": "node --no-warnings --test --test-concurrency=1 tests/api.test.mjs",
+    "test:ui": "python3 tests/ui_test.py"
+  },
+  "engines": { "node": ">=22.13" }
+}

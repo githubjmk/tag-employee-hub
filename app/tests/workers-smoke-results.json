@@ -1,0 +1,47 @@
+{
+  "ranAt": "2026-10-15T22:46:15-0700",
+  "results": [
+    {
+      "name": "W1 security headers on static assets served by the Worker",
+      "ok": true,
+      "detail": "CSP, frame, nosniff present on HTML and JS"
+    },
+    {
+      "name": "W2 CSRF header, body limit and auth enforced through the Durable Object",
+      "ok": true,
+      "detail": "403 without header, 413 oversize, 401 unauthenticated"
+    },
+    {
+      "name": "W3 sign and submit through the Durable Object; retry is idempotent",
+      "ok": true,
+      "detail": "SUB-911AA37F14"
+    },
+    {
+      "name": "W4 scheduler tick runs inside the Durable Object",
+      "ok": true,
+      "detail": {
+        "escalated": 0,
+        "reminders": 0,
+        "sent": 0,
+        "failed": 0,
+        "processed": 0
+      }
+    },
+    {
+      "name": "W5 data, session and demo clock survive a restart of the local runtime",
+      "ok": true,
+      "detail": {
+        "clockBefore": "2026-10-16T17:30:00.144Z",
+        "clockAfter": "2026-10-16T17:31:02.284Z"
+      }
+    },
+    {
+      "name": "W6 audit hash chain and signed records verify after restart",
+      "ok": true,
+      "detail": {
+        "auditEvents": 213,
+        "signedRecordsChecked": 111
+      }
+    }
+  ]
+}

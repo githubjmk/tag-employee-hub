@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "steps": [
+    "390px boot 1.7s",
+    "employee signed + copy opened",
+    "supervisor signed off",
+    "820px boot 1.1s",
+    "employee signed + copy opened",
+    "supervisor signed off"
+  ],
+  "pageErrors": [],
+  "blockedRequests": []
+}

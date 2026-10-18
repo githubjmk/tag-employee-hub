@@ -1,0 +1,14 @@
+PASS U1 end-to-end success flow (shared tablet staff -> management review -> safety -> verification -> employee record)
+PASS U2 shared tablet: auto sign-out after submit, idle sign-out, nothing private left behind
+PASS U3 Spanish employee on a 320px phone: full report, no horizontal scroll, axe clean
+PASS U4 accessibility: axe on every main screen (light + dark), phone and tablet
+PASS U5 keyboard only: sign in, complete, sign and submit without a pointer
+PASS U6 network failure during submit keeps the answers; retry is idempotent (one record)
+PASS U7 temporary PIN first sign-in, PIN change, and wrong-PIN lockout message
+PASS U8 clarification loop: employee answers the question, management signs off, employee marks it seen
+PASS U9 management adds an employee; the new person signs in on a phone with the temporary PIN, sets a PIN and signs the survey
+PASS U10 outside work hours: the weekly report waits for the next shift; safety reports still work
+PASS U11 full-access manager: Restore & backup page; backup downloads a complete copy without sign-in secrets
+PASS U12 open portal: no sign-in screen; the weekly report asks for the PIN once, at signing; phone remembers the ID; shop tablet shows names
+12/12 UI tests passed
+ui exit 0

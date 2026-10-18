@@ -1,0 +1,8 @@
+node_modules/
+.wrangler/
+.dev.vars
+*.pyc
+__pycache__/
+app/tests/screens/
+app/demo/dist/
+.DS_Store

@@ -1,0 +1,51 @@
+# TAG Employee Hub — tests and deploys run in the cloud (GitHub Actions), never on a laptop.
+#
+# - Every push to main: run the API tests, then deploy the TEST COPY (sample data only).
+# - The LIVE Hub (hub.innerspacecases.com) deploys only when someone presses
+#   "Run workflow" on this workflow and chooses "live" — never automatically.
+#
+# Repository secrets (Settings → Secrets and variables → Actions):
+#   CLOUDFLARE_API_TOKEN   Cloudflare API token, "Edit Cloudflare Workers" template, limited to the account
+#   CLOUDFLARE_ACCOUNT_ID  effbd714914880810d9a5ca059311ac7
+# Worker secrets (pepper, setup code, Turnstile secret) already live in Cloudflare and are not touched.
+name: Test and deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Where to deploy"
+        type: choice
+        options: [test, live]
+        default: test
+
+concurrency:
+  group: deploy-${{ github.event.inputs.target || 'test' }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: app } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.target == 'live' && 'live' || 'test' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy with Wrangler
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.92.0"
+          workingDirectory: app/workers
+          command: deploy --env ${{ github.event.inputs.target == 'live' && 'production' || 'test' }}
