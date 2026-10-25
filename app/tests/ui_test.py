@@ -66,8 +66,11 @@ class Server:
 
 
 
-def new_page(browser, viewport, errors):
-    ctx = browser.new_context(viewport=viewport, accept_downloads=True, has_touch=viewport['width'] < 900)
+IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1'
+
+
+def new_page(browser, viewport, errors, user_agent=None):
+    ctx = browser.new_context(viewport=viewport, accept_downloads=True, has_touch=viewport['width'] < 900, **({'user_agent': user_agent} if user_agent else {}))
     pg = ctx.new_page()
     PAGES.append(pg)
     pg.on('pageerror', lambda e: errors.append('pageerror: ' + str(e)))
@@ -694,8 +697,8 @@ def t_passkeys(browser, errors):
         if EXTERNAL and '127.0.0.1' not in srv0.base and 'localhost' not in srv0.base:
             return 'skipped: needs a local server'
         srv = LocalhostView(srv0)
-        # --- Jordan: PIN signing on his phone, then the offer
-        ctx, pg = new_page(browser, PHONE, errors)
+        # --- Jordan: PIN signing on his iPhone, then the offer
+        ctx, pg = new_page(browser, PHONE, errors, user_agent=IPHONE_UA)
         cdp, auth = virtual_authenticator(ctx, pg)
         jordan = srv.person('E-107')
         pg.goto(srv.base + '#/r'); pg.wait_for_selector('form[data-form=who]')
@@ -706,13 +709,18 @@ def t_passkeys(browser, errors):
         pg.wait_for_url('**/#/record/**', timeout=15000)
         pg.wait_for_selector('#pk-offer')
         axe(pg, 'face id offer'); no_hscroll(pg, 'face id offer'); shot(pg, 'u13-01-offer')
-        pg.click('[data-act=pk-offer-yes]')
+        expect(pg.locator('#pk-offer')).to_contain_text('Face ID')
+        # Step 1: PIN again (a wrong PIN is refused), step 2: approve with Face ID
+        pg.fill('#pk-setup input[name=signPin]', '000000'); pg.click('#pk-setup form button[type=submit]')
+        expect(pg.locator('#pk-setup .pk-out')).to_contain_text('PIN')
+        pg.fill('#pk-setup input[name=signPin]', jordan['pin']); pg.click('#pk-setup form button[type=submit]')
+        pg.click('#pk-setup [data-act=pk-create]')
         pg.wait_for_selector('#pk-offer .success-inline')
         hint = json.loads(pg.evaluate("localStorage.getItem('hub_pk')"))
         assert hint['id'] == 'E-107', hint
         creds = cdp.send('WebAuthn.getCredentials', {'authenticatorId': auth})['credentials']
         assert len(creds) == 1 and creds[0]['isResidentCredential'], creds
-        expect(pg.locator('#countdown')).to_have_count(0)                 # setting up stopped the auto sign-out
+        expect(pg.locator('#countdown')).to_have_count(0)                 # own phone: no auto sign-out countdown
         signout(pg)
         # Portal greets him; one tap signs in (no ID, no PIN)
         pg.wait_for_selector('.pk-card'); expect(pg.locator('.pk-card')).to_contain_text(jordan['name'])
@@ -726,12 +734,14 @@ def t_passkeys(browser, errors):
         ctx.close()
 
         # --- Maria: sets up Face ID under More, then signs this week's report with Face ID only
-        ctx, pg = new_page(browser, PHONE, errors)
+        ctx, pg = new_page(browser, PHONE, errors, user_agent=IPHONE_UA)
         cdp, auth = virtual_authenticator(ctx, pg)
         maria = srv.person('E-104')
         login(pg, srv, 'E-104', shared=False)
-        pg.goto(srv.base + '#/more'); pg.wait_for_selector('#pk-list [data-act=pk-setup]')
-        pg.click('[data-act=pk-setup]')
+        pg.goto(srv.base + '#/more'); pg.wait_for_selector('#pk-list details.pk-add')
+        pg.click('#pk-list details.pk-add summary')
+        pg.fill('#pk-setup input[name=signPin]', maria['pin']); pg.click('#pk-setup form button[type=submit]')
+        pg.click('#pk-setup [data-act=pk-create]')
         pg.wait_for_selector('#pk-list li')
         axe(pg, 'more face id'); shot(pg, 'u13-03-more-phones')
         signout(pg)
@@ -752,7 +762,7 @@ def t_passkeys(browser, errors):
         expect(pg.locator('#pk-offer')).to_have_count(0)                  # already set up: no offer
         shot(pg, 'u13-05-signed-with-face-id')
         # "Use my PIN instead" is always there
-        ctx2, pg2 = new_page(browser, PHONE, errors)
+        ctx2, pg2 = new_page(browser, PHONE, errors, user_agent=IPHONE_UA)
         cdp2, auth2 = virtual_authenticator(ctx2, pg2)
         pg2.goto(srv.base); pg2.evaluate("localStorage.setItem('hub_pk', JSON.stringify({id:'E-106', name:'Kim Testwell'}))")
         pg2.goto(srv.base + '#/r'); pg2.reload()

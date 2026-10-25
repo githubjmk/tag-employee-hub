@@ -16,7 +16,7 @@ Wrangler 4.20.0 was used for the local Workers runs (`evidence/r12-wrangler-vers
 
 | Suite | Runtime | Result |
 |---|---|---|
-| API (`npm test`: 45 existing + 11 new passkey tests PK-01…PK-11) | Node 22 | **56/56 passed** |
+| API (`npm test`: 45 existing + 13 passkey tests PK-01…PK-13) | Node 22 | **58/58 passed** |
 | Browser suite U1–U13 (U13 = Face ID, Chromium virtual authenticator) | Node server | **13/13 passed** |
 | Browser suite U1–U13 | Local Cloudflare Workers + Durable Object (wrangler 4.92.0) | **13/13 passed** |
 | Workers smoke W1–W6, including a full restart | Local Workers | **6/6 passed** |

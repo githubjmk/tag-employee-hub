@@ -1,23 +1,94 @@
 {
-  "ranAt": "2026-10-25T08:17:39-0700",
+  "ranAt": "2026-10-25T08:31:07-0700",
   "base": "node server/server.js",
   "results": [
     {
+      "name": "U1 end-to-end success flow (shared tablet staff -> management review -> safety -> verification -> employee record)",
+      "ok": true,
+      "ms": 9545,
+      "detail": {
+        "submission": "SUB-2F4C806C2E",
+        "tabletSignInToSubmittedSeconds": 1.7
+      }
+    },
+    {
       "name": "U2 shared tablet: auto sign-out after submit, idle sign-out, nothing private left behind",
       "ok": true,
-      "ms": 26847,
+      "ms": 26767,
       "detail": "auto sign-out + idle sign-out verified"
+    },
+    {
+      "name": "U3 Spanish employee on a 320px phone: full report, no horizontal scroll, axe clean",
+      "ok": true,
+      "ms": 5331,
+      "detail": "es @320px ok"
+    },
+    {
+      "name": "U4 accessibility: axe on every main screen (light + dark), phone and tablet",
+      "ok": true,
+      "ms": 101102,
+      "detail": "92 screen checks"
+    },
+    {
+      "name": "U5 keyboard only: sign in, complete, sign and submit without a pointer",
+      "ok": true,
+      "ms": 4209,
+      "detail": "keyboard completion ok"
+    },
+    {
+      "name": "U6 network failure during submit keeps the answers; retry is idempotent (one record)",
+      "ok": true,
+      "ms": 4598,
+      "detail": {
+        "attempts": 3
+      }
+    },
+    {
+      "name": "U7 temporary PIN first sign-in, PIN change, and wrong-PIN lockout message",
+      "ok": true,
+      "ms": 5390,
+      "detail": "temporary PIN + lockout ok"
+    },
+    {
+      "name": "U8 clarification loop: employee answers the question, management signs off, employee marks it seen",
+      "ok": true,
+      "ms": 5260,
+      "detail": "clarification loop ok"
+    },
+    {
+      "name": "U9 management adds an employee; the new person signs in on a phone with the temporary PIN, sets a PIN and signs the survey",
+      "ok": true,
+      "ms": 6058,
+      "detail": {
+        "newEmployeeId": "E-112",
+        "firstSignInToSignedSeconds": 1.0
+      }
+    },
+    {
+      "name": "U10 outside work hours: the weekly report waits for the next shift; safety reports still work",
+      "ok": true,
+      "ms": 4285,
+      "detail": "closed window + safety report ok"
+    },
+    {
+      "name": "U11 full-access manager: Restore & backup page; backup downloads a complete copy without sign-in secrets",
+      "ok": true,
+      "ms": 5102,
+      "detail": {
+        "restoreForm": "unavailable note (Node)",
+        "backupSubmissions": 47
+      }
     },
     {
       "name": "U12 open portal: no sign-in screen; the weekly report asks for the PIN once, at signing; phone remembers the ID; shop tablet shows names",
       "ok": true,
-      "ms": 6136,
+      "ms": 6324,
       "detail": "phone (typed ID, remembered) and shop tablet (name grid) both sign with one PIN entry"
     },
     {
       "name": "U13 Face ID: offered after signing with the PIN; portal greets the person and signs in with Face ID; the weekly report is signed with Face ID (no PIN); More lists phones; management removes them",
       "ok": true,
-      "ms": 8514,
+      "ms": 9284,
       "detail": "offer after PIN signing, portal Face ID sign-in, report signed with Face ID (record says passkey), PIN fallback, removal by management"
     }
   ]

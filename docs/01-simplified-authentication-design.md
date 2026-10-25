@@ -103,9 +103,11 @@ On a person's **own phone** the PIN can be replaced by the phone's own lock: Fac
 
 **How people use it**
 - After signing a weekly report with the PIN on their phone, the Hub asks once: "Skip the PIN next time? Use Face ID on this phone." (Not now = not asked again for 30 days.) It can also be set up under More → Face ID / fingerprint.
+- Setting up a phone takes the PIN again (plus the authenticator code for management), then one Face ID approval. An open session alone, or a PIN seen over someone's shoulder plus a session, is not enough to add a phone. The person gets an in-app notice for every phone added (for management accounts, full-access managers do too).
+- On a phone, the open weekly report now starts a personal session (60 minutes idle). Tablets and computers keep the short shared session and the auto sign-out.
 - From then on that phone greets them on the portal ("Hi, Maria · Sign in with Face ID"), skips "who are you" in the weekly report, and shows **Sign with Face ID** at the end. One Face ID approval both identifies them and signs.
 - **The PIN always works** ("Use my PIN instead"), on every screen.
-- **Shop tablets keep name + PIN.** The server refuses passkeys on registered tablets.
+- **Shop tablets keep name + PIN.** The server refuses passkeys on registered tablets and on any session marked "shared device", both for setup and for signing.
 
 **What the phone and the Hub keep**
 - The phone keeps the private key; the face/fingerprint never leaves the phone and the Hub never sees it.
@@ -114,13 +116,14 @@ On a person's **own phone** the PIN can be replaced by the phone's own lock: Fac
 - Passkeys belong to the web address: those made on hub.innerspacecases.com work only there (not on the test copy or the workers.dev backup address).
 
 **Signing with Face ID: same evidence, bound to the answers**
-- Before the Face ID prompt, the page sends the exact answers. The server turns their SHA-256 hash into a one-time challenge (5 minutes).
+- Before the Face ID prompt, the page sends the exact answers, the week, the language and the consent choice. The server turns their SHA-256 hash into a one-time challenge (5 minutes).
 - The phone signs that challenge. The server checks:
   - the signature against the stored key;
   - the web address;
   - that Face ID/fingerprint was actually used ("user verified");
   - the phone's signature counter.
-- The approval becomes a single-use signing ticket for exactly those answers. Changed answers, someone else's session, a second use or more than 5 minutes are all refused, and nothing is signed.
+- The approval becomes a single-use signing ticket for exactly that content. The server recomputes the hash from the report actually being signed, taking the week from its assignment, not from the page. Changed answers, another week, someone else's session, a shared session, a second use or more than 5 minutes are all refused, and nothing is signed.
+- The open weekly report always shows, and files to, the week that can be signed now. Before Friday 07:00 that is still last week's report.
 - The signed record says how it was signed:
   - method "passkey (Face ID / fingerprint / phone lock) on the person's own phone";
   - the phone type and passkey ID;
@@ -135,9 +138,14 @@ On a person's **own phone** the PIN can be replaced by the phone's own lock: Fac
 **Lost or replaced phone**
 - The person removes the phone under More.
 - A full-access manager, or the person's own manager for staff, uses Accounts → "Remove Face ID phones". This also signs the person out everywhere. Their PIN keeps working.
-- A deactivated person's phone stops working at once.
+- **Credential resets remove every phone:** a new temporary PIN, an authenticator reset, or deactivation. That way a stolen PIN plus a phone set up with it stops working once management resets the PIN.
+- When the person removes a phone, the sessions that phone started end too.
 
 **Rules**
-- Failed Face ID attempts never count toward the PIN lockout; they are rate limited and audited.
-- Hard-locked accounts stay locked.
+- Face ID obeys the same gates as the PIN: a temporary lock (5 wrong PINs), a hard lock, an unfinished PIN reset, management without an authenticator, and the "shop tablet only" policy all stop it.
+- Failed Face ID attempts don't add to the PIN lockout count (they can't be guessed). They are rate limited (120 per minute per address, because the shop Wi-Fi shares one address) and audited.
+- Each Face ID sign-in replaces the browser's previous session, so sessions don't pile up.
+- Malformed data is refused cleanly and uses up the challenge.
+- Note: management Face ID relies on the phone's own lock. A passkey kept in a shared password group would be shared too, so management should keep their passkey in their own account.
+- Independent review (2026-10-25) found gaps in the first version; these rules close them. Tests PK-12 and PK-13 cover them.
 - Every setup, removal, sign-in and failure is in the hash-chained audit log.

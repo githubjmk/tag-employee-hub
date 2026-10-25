@@ -64,18 +64,19 @@ function credentialJSON(c) {
 }
 
 // Phones (Safari especially) only show the Face ID prompt when it is opened right after a tap.
-// So the one-time challenge is fetched ahead of time, when the button appears, and the tap then
+// So the one-time sign-in challenge is fetched ahead of time, when the button appears, and the tap then
 // opens the prompt immediately. A prepared challenge is used once and only within 4 minutes.
 let pre = null;
 const fresh = (k) => !!pre && pre.key === k && Date.now() - pre.at < 4 * 60000;
 function prepare(k, make) { if (!fresh(k)) { pre = { key: k, at: Date.now(), promise: make() }; pre.promise.catch(() => { if (pre && pre.key === k) pre = null; }); } }
 function take(k, make) { if (fresh(k)) { const p = pre.promise; pre = null; return p; } return make(); }
 const getKey = ({ purpose, action, content } = {}) => 'get:' + JSON.stringify([purpose || 'login', action || '', content || null]);
-export const prepareRegister = () => prepare('reg', () => api.call('passkey.registerOptions', {}));
 export const prepareSignIn = (args = {}) => prepare(getKey(args), () => api.passkeyOptions(args));
 
-export async function registerPasskey() {
-  const o = await take('reg', () => api.call('passkey.registerOptions', {}));
+// Setting up a phone takes two taps: (1) PIN (+ code for management) unlocks a one-time challenge,
+// (2) "Use Face ID" opens the phone's prompt right away and stores the new passkey.
+export const startRegister = ({ signPin, totp }) => api.call('passkey.registerOptions', { signPin, totp });
+export async function finishRegister(o) {
   const pk = o.publicKey;
   const publicKey = { ...pk, challenge: fromB64u(pk.challenge), user: { ...pk.user, id: fromB64u(pk.user.id) },
     excludeCredentials: (pk.excludeCredentials || []).map(x => ({ ...x, id: fromB64u(x.id) })) };
@@ -94,3 +95,6 @@ export async function passkeySignIn({ purpose, action, content, expectEmployeeId
   setPkHint(r.employee);
   return r;
 }
+
+// Phones count as personal devices for the open weekly report (a tablet or computer may be shared).
+export const isPhone = () => /iPhone|Android.*Mobile/.test(navigator.userAgent || '');

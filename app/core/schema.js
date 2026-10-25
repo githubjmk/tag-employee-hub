@@ -32,11 +32,16 @@ CREATE TABLE IF NOT EXISTS passkeys (
   remove_reason TEXT
 );
 CREATE INDEX IF NOT EXISTS passkeys_employee ON passkeys (employee_id);
+-- Which sessions a passkey started, so removing a lost phone ends the sessions on it.
+CREATE TABLE IF NOT EXISTS passkey_sessions (
+  token_hash TEXT PRIMARY KEY,
+  passkey_id TEXT NOT NULL
+);
 -- One-time challenges for passkey ceremonies (5 minutes). A verified "sign" challenge becomes a
 -- single-use signing ticket bound to the exact answers that were shown.
 CREATE TABLE IF NOT EXISTS webauthn_challenges (
   id TEXT PRIMARY KEY,
-  purpose TEXT NOT NULL CHECK (purpose IN ('register','login','sign')),
+  purpose TEXT NOT NULL CHECK (purpose IN ('register','login','sign')),   -- 'register' rows exist only after PIN (+ code) re-entry
   employee_id TEXT,
   challenge TEXT NOT NULL,
   rp_id TEXT NOT NULL,

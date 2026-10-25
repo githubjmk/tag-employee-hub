@@ -123,7 +123,7 @@ export function createHttpHandler({ service, secureCookies = false, demo = null,
       if (p === '/api/passkey/login' && req.method === 'POST') {
         if (rateLimited('pk:' + clientKey, 120, 60000)) throw new HubError(429, 'rate', 'Too many attempts. Wait a minute.');
         const b = await body(req, MAX_BODY);
-        const r = await service.passkeyLogin({ challengeId: b.challengeId, credential: b.credential, expectEmployeeId: b.expectEmployeeId, deviceToken: tokenFrom(c, 'hub_device') });
+        const r = await service.passkeyLogin({ challengeId: b.challengeId, credential: b.credential, expectEmployeeId: b.expectEmployeeId, deviceToken: tokenFrom(c, 'hub_device'), currentToken: tokenFrom(c, 'hub_session') });
         return json(200, { ok: true, employee: r.employee, idleMinutes: r.idleMinutes, signTicket: r.signTicket, sharedDevice: false }, { 'Set-Cookie': cookie('hub_session', r.token, 12 * 3600) });
       }
       if (p === '/api/logout' && req.method === 'POST') {
@@ -169,7 +169,8 @@ export function createHttpHandler({ service, secureCookies = false, demo = null,
     } catch (e) {
       const status = e instanceof HubError ? e.status : 500;
       if (status === 500) console.error('[hub] internal error:', e && e.message);   // never logs request bodies
-      const extra = status === 401 && !['/api/login', '/api/passkey/login', '/api/passkey/options'].includes(url.pathname) ? { 'Set-Cookie': cookie('hub_session', '', 0) } : {};
+      // Clear the session cookie only when the session itself is gone (not for a wrong signing PIN or code).
+      const extra = status === 401 && e instanceof HubError && ['no_session', 'expired', 'locked'].includes(e.code) && !['/api/login', '/api/passkey/login', '/api/passkey/options'].includes(url.pathname) ? { 'Set-Cookie': cookie('hub_session', '', 0) } : {};
       return json(status, { error: e instanceof HubError ? e.code : 'internal', message: e instanceof HubError ? e.message : 'Something went wrong' }, extra);
     }
   };

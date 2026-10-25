@@ -6,7 +6,7 @@ import { STR } from './i18n.js';
 import { api, ApiError } from './api.js';
 import { TAG_LOGO } from './logo.js';
 import qrcode from './qr.js';
-import { passkeySupported, platformAvailable, pkHint, setPkHint, offerSkipped, skipOffer, methodName, cancelled, registerPasskey, passkeySignIn, prepareRegister, prepareSignIn } from './passkey.js';
+import { passkeySupported, platformAvailable, pkHint, setPkHint, offerSkipped, skipOffer, methodName, cancelled, startRegister, finishRegister, passkeySignIn, prepareSignIn, isPhone } from './passkey.js';
 
 const TZ = 'America/Los_Angeles';
 const root = document.getElementById('app');
@@ -43,6 +43,13 @@ const isDemo = () => !!((S.config && S.config.demo) || (S.pub && S.pub.demo) || 
 const tm = (k) => t(k).replaceAll('{m}', methodName(S.lang));
 // Face ID is offered only on a person's own device: never on a registered shop tablet.
 const pkReadyFor = (eid) => { const h = pkHint(); return !!h && h.id === eid && passkeySupported() && !S.roster && !(S.me && S.me.deviceId); };
+// Setting up Face ID: (1) PIN (+ authenticator code for management) -> (2) "Use Face ID".
+const pkSetupBlock = () => html`<div class="pk-setup" id="pk-setup">${S.pkReg
+  ? html`<button class="btn primary" data-act="pk-create">${icon('lock')} ${tm('pk_offer_yes')}</button><p class="hint">${tm('pk_step2')}</p>`
+  : html`<form data-form="pkunlock" novalidate class="pk-unlock"><label class="field"><span>${t('pk_confirm_pin')}</span><input name="signPin" type="password" inputmode="numeric" maxlength="12" autocomplete="off" required></label>
+    ${S.me && S.me.elevated ? html`<label class="field"><span>${t('signin_code')}</span><input name="totp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label>` : ''}
+    <button class="btn primary" type="submit">${t('next')}</button></form>`}<div class="pk-out" role="status"></div></div>`;
+const rerenderPkSetup = (msg) => { const b = document.getElementById('pk-setup'); if (!b) return; b.outerHTML = String(pkSetupBlock()); if (msg) { const o = document.querySelector('#pk-setup .pk-out'); if (o) o.textContent = msg; } };
 const addDays = (ymd, n) => { const d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 
 function errMsg(e) {
@@ -409,6 +416,8 @@ function quickSignForm(sv) {
 const pkSignButtons = (sv) => html`${sv.error ? html`<p class="alert" role="alert">${sv.error}</p>` : ''}
   <button type="button" class="btn primary wide pk-btn" data-act="pk-sign">${icon('lock')} ${t('pk_sign')} ${methodName(S.lang)}</button>
   <p class="pk-alt"><button type="button" class="link" data-act="pk-usepin">${t('pk_use_pin')}</button></p>`;
+// Exactly what the Face ID approval covers (the server recomputes it from the report being signed).
+const pkContent = (sv) => ({ weekId: sv.week.weekId, answers: sv.answers, language: S.lang, esignConsent: sv.quick ? true : !S.me.consent });
 async function pkSignSubmit(btn) {
   const sv = S.survey, form = btn.closest('form');
   sv.affirm = form.elements.affirm.checked;
@@ -418,20 +427,20 @@ async function pkSignSubmit(btn) {
   btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = t('submitting');
   sv.submitting = true;
   try {
-    const content = { answers: sv.answers, language: S.lang };
-    const hadConsent = !sv.quick && !!S.me.consent;
+    const content = pkContent(sv);
     const r = await passkeySignIn({ purpose: 'sign', action: 'survey.submit', content, expectEmployeeId: eid });
     S.me = await api.call('session.me', {});
     if (S.me.consent && S.me.consent.choice === 'paper') throw new ApiError(409, 'paper_chosen', t('paper_chosen'));
     let assignmentId = sv.assignmentId;
     if (sv.quick) {
       const h = await api.call('home', {});
-      const open = h.surveys.slice().reverse().find(x => ['open', 'missing'].includes(x.state));
-      if (!open) { const done = h.surveys.slice().reverse().find(x => x.submissionId); S.survey = null; await loadMe(); return go(done ? '#/record/' + done.submissionId : '#/home'); }
-      assignmentId = open.assignmentId;
+      const mine = h.surveys.find(x => x.week.weekId === sv.week.weekId);   // only the week shown on screen
+      if (!mine || !['open', 'missing'].includes(mine.state)) { S.survey = null; await loadMe(); return go(mine && mine.submissionId ? '#/record/' + mine.submissionId : '#/home'); }
+      assignmentId = mine.assignmentId;
     }
     sv.idem = sv.idem || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
-    const res = await api.call('survey.submit', { assignmentId, ...content, affirm: true, esignConsent: sv.quick || !hadConsent, idempotencyKey: sv.idem, signTicket: r.signTicket });
+    const { weekId, ...fields } = content;
+    const res = await api.call('survey.submit', { assignmentId, ...fields, affirm: true, idempotencyKey: sv.idem, signTicket: r.signTicket });
     S.survey = null;
     await loadMe();
     go('#/record/' + res.submissionId + '?new=1');
@@ -455,7 +464,8 @@ async function quickSubmit(form, btn) {
   try {
     if (!sv.signedIn) {
       const turnstileToken = turnstileWidget !== null && tsReady() ? window.turnstile.getResponse(turnstileWidget) : undefined;
-      const r = await api.login({ employeeId: sv.who.id, pin: signPin, totp: f.totp ? f.totp.value : undefined, sharedDevice: true, turnstileToken });
+      // A phone is the person's own; a tablet or computer may be shared (short session, auto sign-out).
+      const r = await api.login({ employeeId: sv.who.id, pin: signPin, totp: f.totp ? f.totp.value : undefined, sharedDevice: !!S.roster || !isPhone(), turnstileToken });
       sv.signedIn = true; sv.needTotp = false;
       if (r.mustSetPin) { sv.mustSetPin = true; sv.error = null; return renderSurvey(); }
     } else if (sv.mustSetPin) {
@@ -465,11 +475,11 @@ async function quickSubmit(form, btn) {
     S.me = await api.call('session.me', {});
     if (S.me.consent && S.me.consent.choice === 'paper') throw new ApiError(409, 'paper_chosen', t('paper_chosen'));
     const h = await api.call('home', {});
-    const open = h.surveys.slice().reverse().find(x => ['open', 'missing'].includes(x.state));
+    const mine = h.surveys.find(x => x.week.weekId === sv.week.weekId);   // only the week shown on screen
+    const open = mine && ['open', 'missing'].includes(mine.state) ? mine : null;
     if (!open) {
-      const done = h.surveys.slice().reverse().find(x => x.submissionId);
       await loadMe();
-      return go(done ? '#/record/' + done.submissionId : '#/home');
+      return go(mine && mine.submissionId ? '#/record/' + mine.submissionId : '#/home');
     }
     sv.idem = sv.idem || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
     const res = await api.call('survey.submit', { assignmentId: open.assignmentId, answers: sv.answers, signPin, affirm: true, esignConsent: true, language: S.lang, idempotencyKey: sv.idem });
@@ -600,7 +610,7 @@ function renderSurvey() {
       ${step !== 'sign' ? html`<button class="btn primary" data-act="survey-next">${t('next')}</button>` : ''}
     </div></div>`);
   if (sv.quick && step === 'sign' && S.config && S.config.turnstileSiteKey && !sv.signedIn) mountTurnstile(S.config.turnstileSiteKey);
-  if (step === 'sign' && root.querySelector('[data-act=pk-sign]')) prepareSignIn({ purpose: 'sign', action: 'survey.submit', content: { answers: sv.answers, language: S.lang } });
+  if (step === 'sign' && root.querySelector('[data-act=pk-sign]')) prepareSignIn({ purpose: 'sign', action: 'survey.submit', content: pkContent(sv) });
 }
 
 function collectStep(validate = true) {
@@ -668,13 +678,14 @@ async function recordView(id, isNew) {
   const answers = o.answers.map(a => html`<div class="rv"><dt>${a.questionText}${a.origin !== 'paper' ? html` <span class="tag">${t('added_item')}</span>` : ''}</dt><dd>${a.answerLabel ? html`${typeof a.answer === 'number' ? a.answer + ' · ' : ''}${a.answerLabel}` : a.answer}</dd></div>`);
   const pendingQ = rv.pendingClarification;
   const shared = S.me.sharedDevice && rec.viewerIsOwner && isNew;
-  const offer = isNew && rec.viewerIsOwner && !S.me.deviceId && !S.roster && !pkReadyFor(S.me.employee.id) && !offerSkipped(S.me.employee.id) && await platformAvailable();
+  S.pkReg = null;
+  const offer = isNew && rec.viewerIsOwner && !S.me.deviceId && !S.me.sharedDevice && !S.roster && !pkReadyFor(S.me.employee.id) && !offerSkipped(S.me.employee.id) && await platformAvailable();
   render(active, html`
     ${isNew ? html`<div class="success" role="status"><h1>${t('confirm_title')}</h1><p>${t('confirm_sub')}</p>
       ${shared ? html`<p class="countdown" id="countdown">${t('auto_signout')} <strong id="cd">20</strong>${t('seconds')}</p><div class="row wrap"><button class="btn primary" data-act="signout">${t('signout_now')}</button><button class="btn" data-act="stay-after">${t('stay')}</button></div>` : ''}</div>`
       : html`<h1>${rec.viewerIsOwner ? t('record_title') : rec.employee.name + ' — weekly report'}</h1>`}
     ${offer ? html`<section class="card pk-offer" id="pk-offer"><h2>${tm('pk_offer_title')}</h2><p>${tm('pk_offer_body')}</p>
-      <div class="row wrap"><button class="btn primary" data-act="pk-offer-yes">${icon('lock')} ${tm('pk_offer_yes')}</button><button class="btn" data-act="pk-offer-no">${t('pk_offer_no')}</button></div><div class="pk-out" role="status"></div></section>` : ''}
+      ${pkSetupBlock()}<p><button class="btn-quiet" data-act="pk-offer-no">${t('pk_offer_no')}</button></p></section>` : ''}
     ${o.demo ? html`<p class="demo-note">DEMO RECORD — synthetic data, not a legally operative signature.</p>` : ''}
     ${pendingQ && rec.viewerIsOwner && surveyOpen() ? html`<section class="card emphasis"><h2>${icon('q')} ${t('question_from')}</h2><blockquote>${pendingQ.text}<br><small>${pendingQ.by} · ${fmtDT(pendingQ.at)}</small></blockquote>
       <form data-form="respond" data-id="${rec.submissionId}" novalidate><label class="field"><span>${t('your_answer')}</span><textarea name="text" rows="3" maxlength="4000" required></textarea></label><button class="btn primary" type="submit">${t('answer_btn')}</button></form></section>` : ''}
@@ -706,7 +717,6 @@ async function recordView(id, isNew) {
     ${rec.viewerIsOwner ? (surveyOpen() ? correctionForm(rec, o) : closedNote()) : ''}
     ${rec.viewerCanReview ? reviewPanel(rec) : ''}`);
   if (shared) startAutoSignout();
-  if (offer) prepareRegister();
 }
 
 function correctionForm(rec, o) {
@@ -1153,12 +1163,12 @@ async function renderPkList(note) {
   const box = document.getElementById('pk-list'); if (!box) return;
   let list;
   try { list = await call('passkey.mine', {}); } catch (e) { if (!quiet(e)) box.textContent = errMsg(e); return; }
-  const canAdd = await platformAvailable();
+  const canAdd = !S.me.sharedDevice && await platformAvailable();
+  S.pkReg = null;
   const box2 = document.getElementById('pk-list'); if (!box2) return;
   box2.innerHTML = String(html`${note ? html`<p class="success-inline">${note}</p>` : ''}
     ${list.length ? html`<ul class="plain-list">${list.map(p => html`<li><span><strong>${p.device}</strong> · ${t('pk_added')} ${fmtDate(p.createdAt)}${p.lastUsedAt ? html` · ${t('pk_last_used')} ${fmtDT(p.lastUsedAt)}` : ''}</span><button class="btn-quiet" data-act="pk-remove" data-id="${p.id}">${t('pk_remove')}</button></li>`)}</ul>` : html`<p class="meta">${t('pk_none')}</p>`}
-    ${canAdd ? html`<button class="btn" data-act="pk-setup">${icon('lock')} ${tm('pk_setup_here')}</button>` : ''}`);
-  if (canAdd) prepareRegister();
+    ${canAdd ? html`<details class="pk-add"><summary><strong>${tm('pk_setup_here')}</strong></summary>${pkSetupBlock()}</details>` : ''}`);
 }
 
 async function adminView(params) {
@@ -1307,19 +1317,19 @@ root.addEventListener('click', async (ev) => {
   if (act === 'pk-sign') return pkSignSubmit(el);
   if (act === 'pk-usepin') { if (S.survey) { S.survey.usePin = true; S.survey.error = null; renderSurvey(); const f = root.querySelector('#signpin'); if (f) f.focus(); } return; }
   if (act === 'pk-offer-no') { skipOffer(S.me.employee.id); document.getElementById('pk-offer')?.remove(); return; }
-  if (act === 'pk-offer-yes' || act === 'pk-setup') {
+  if (act === 'pk-create') {
     clearInterval(S.autoOut); document.getElementById('countdown')?.remove();
     el.disabled = true;
-    const out = act === 'pk-setup' ? null : document.querySelector('#pk-offer .pk-out');
+    const inOffer = !!el.closest('#pk-offer');
+    const o = S.pkReg; S.pkReg = null;    // a challenge is used once
     try {
-      await registerPasskey();
-      if (out) { out.innerHTML = String(html`<p class="success-inline">${icon('shield')} ${tm('pk_done')}</p>`); el.closest('.row')?.remove(); }
+      await finishRegister(o);
+      if (inOffer) { document.getElementById('pk-setup').innerHTML = String(html`<p class="success-inline">${icon('shield')} ${tm('pk_done')}</p>`); document.querySelector('#pk-offer [data-act=pk-offer-no]')?.remove(); }
       else await renderPkList(tm('pk_done'));
     } catch (e) {
-      el.disabled = false;
       if (e && e.name === 'InvalidStateError') setPkHint(S.me.employee);   // this phone was already set up
       const msg = cancelled(e) ? t('pk_cancelled') : (e && e.name === 'InvalidStateError') ? tm('pk_done') : errMsg(e);
-      if (out) out.textContent = msg; else await renderPkList(msg);
+      rerenderPkSetup(msg);
     }
     return;
   }
@@ -1416,6 +1426,13 @@ root.addEventListener('submit', async (ev) => {
     btn.disabled = true;
     try { await api.call('auth.setPin', { newPin: f.newPin.value, confirmPin: f.confirmPin.value }); await loadMe(); return afterSignIn(); }
     catch (e) { return setPinView(errMsg(e)); }
+  }
+  if (kind === 'pkunlock') {
+    clearInterval(S.autoOut); document.getElementById('countdown')?.remove();
+    btn.disabled = true;
+    try { S.pkReg = await startRegister({ signPin: f.signPin.value, totp: f.totp ? f.totp.value : undefined }); rerenderPkSetup(); document.querySelector('#pk-setup [data-act=pk-create]')?.focus(); }
+    catch (e) { if (e instanceof ApiError && e.status === 401 && ['no_session', 'expired', 'locked'].includes(e.code)) return wipe(e.message); rerenderPkSetup(errMsg(e)); }
+    return;
   }
   if (kind === 'sign') return submitSurvey(form, btn);
   if (kind === 'qsign') return quickSubmit(form, btn);

@@ -23,9 +23,10 @@ export function b64urlEncode(bytes) {
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 export function b64urlDecode(str) {
-  if (typeof str !== 'string' || !/^[A-Za-z0-9_-]*$/.test(str)) throw new WebAuthnError('bad_encoding');
+  if (typeof str !== 'string' || !/^[A-Za-z0-9_-]*$/.test(str) || str.length % 4 === 1) throw new WebAuthnError('bad_encoding');
   const s = str.replace(/-/g, '+').replace(/_/g, '/');
-  const bin = atob(s + '==='.slice((s.length + 3) % 4));
+  let bin;
+  try { bin = atob(s + '==='.slice((s.length + 3) % 4)); } catch { throw new WebAuthnError('bad_encoding'); }
   return Uint8Array.from(bin, c => c.charCodeAt(0));
 }
 
@@ -111,9 +112,12 @@ export function coseToJwk(cose) {
 }
 
 async function importKey(jwk, alg) {
-  if (alg === ALG.ES256) return subtle().importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
-  if (alg === ALG.RS256) return subtle().importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
-  fail('unsupported_algorithm');
+  if (alg !== ALG.ES256 && alg !== ALG.RS256) fail('unsupported_algorithm');
+  try {
+    return alg === ALG.ES256
+      ? await subtle().importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
+      : await subtle().importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
+  } catch { fail('bad_key'); }   // e.g. a point that is not on the curve
 }
 
 // ECDSA signatures from authenticators are ASN.1 DER; Web Crypto wants raw r||s (64 bytes for P-256).
@@ -143,6 +147,7 @@ const field = (o, k, max = 20000) => { const v = o && o[k]; if (typeof v !== 'st
 function checkClientData(bytes, { type, challenge, origin }) {
   let cd;
   try { cd = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); } catch { fail('client_data'); }
+  if (!cd || typeof cd !== 'object' || Array.isArray(cd)) fail('client_data');
   if (cd.type !== type) fail('wrong_type');
   if (typeof cd.challenge !== 'string' || cd.challenge !== challenge) fail('wrong_challenge');
   if (cd.origin !== origin) fail('wrong_origin');
@@ -190,9 +195,13 @@ export async function verifyAssertion({ credential, challenge, origin, rpId, sto
   const signed = new Uint8Array(adBytes.length + 32);
   signed.set(adBytes); signed.set(await sha256(cdBytes), adBytes.length);
   const key = await importKey(stored.jwk, stored.alg);
-  const ok = stored.alg === ALG.ES256
-    ? await subtle().verify({ name: 'ECDSA', hash: 'SHA-256' }, key, derToRaw(sig), signed)
-    : await subtle().verify({ name: 'RSASSA-PKCS1-v1_5' }, key, sig, signed);
+  const raw = stored.alg === ALG.ES256 ? derToRaw(sig) : sig;
+  let ok = false;
+  try {
+    ok = stored.alg === ALG.ES256
+      ? await subtle().verify({ name: 'ECDSA', hash: 'SHA-256' }, key, raw, signed)
+      : await subtle().verify({ name: 'RSASSA-PKCS1-v1_5' }, key, raw, signed);
+  } catch { ok = false; }
   if (!ok) fail('bad_signature');
   // Counter: 0 means the authenticator does not count (all synced passkeys); otherwise it must grow.
   if ((ad.signCount !== 0 || stored.signCount !== 0) && ad.signCount <= stored.signCount) fail('counter_went_back');
