@@ -63,8 +63,19 @@ function credentialJSON(c) {
   return out;
 }
 
+// Phones (Safari especially) only show the Face ID prompt when it is opened right after a tap.
+// So the one-time challenge is fetched ahead of time, when the button appears, and the tap then
+// opens the prompt immediately. A prepared challenge is used once and only within 4 minutes.
+let pre = null;
+const fresh = (k) => !!pre && pre.key === k && Date.now() - pre.at < 4 * 60000;
+function prepare(k, make) { if (!fresh(k)) { pre = { key: k, at: Date.now(), promise: make() }; pre.promise.catch(() => { if (pre && pre.key === k) pre = null; }); } }
+function take(k, make) { if (fresh(k)) { const p = pre.promise; pre = null; return p; } return make(); }
+const getKey = ({ purpose, action, content } = {}) => 'get:' + JSON.stringify([purpose || 'login', action || '', content || null]);
+export const prepareRegister = () => prepare('reg', () => api.call('passkey.registerOptions', {}));
+export const prepareSignIn = (args = {}) => prepare(getKey(args), () => api.passkeyOptions(args));
+
 export async function registerPasskey() {
-  const o = await api.call('passkey.registerOptions', {});
+  const o = await take('reg', () => api.call('passkey.registerOptions', {}));
   const pk = o.publicKey;
   const publicKey = { ...pk, challenge: fromB64u(pk.challenge), user: { ...pk.user, id: fromB64u(pk.user.id) },
     excludeCredentials: (pk.excludeCredentials || []).map(x => ({ ...x, id: fromB64u(x.id) })) };
@@ -76,7 +87,7 @@ export async function registerPasskey() {
 
 // Sign in with Face ID. For signing a report pass purpose 'sign', the action and the exact content.
 export async function passkeySignIn({ purpose, action, content, expectEmployeeId } = {}) {
-  const o = await api.passkeyOptions({ purpose, action, content });
+  const o = await take(getKey({ purpose, action, content }), () => api.passkeyOptions({ purpose, action, content }));
   const pk = o.publicKey;
   const cred = await navigator.credentials.get({ publicKey: { ...pk, challenge: fromB64u(pk.challenge), allowCredentials: [] } });
   const r = await api.passkeyLogin({ challengeId: o.challengeId, credential: credentialJSON(cred), expectEmployeeId });

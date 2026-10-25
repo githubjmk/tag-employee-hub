@@ -116,12 +116,12 @@ export function createHttpHandler({ service, secureCookies = false, demo = null,
       }
       // Passkeys (Face ID / fingerprint) on a person's own phone. Bound to this web address.
       if (p === '/api/passkey/options' && req.method === 'POST') {
-        if (rateLimited('pk:' + clientKey, 30, 60000)) throw new HubError(429, 'rate', 'Too many attempts. Wait a minute.');
+        if (rateLimited('pk:' + clientKey, 120, 60000)) throw new HubError(429, 'rate', 'Too many attempts. Wait a minute.');
         const b = await body(req, MAX_BODY);
         return json(200, await service.passkeyOptions({ rp, purpose: b.purpose, action: b.action, content: b.content }));
       }
       if (p === '/api/passkey/login' && req.method === 'POST') {
-        if (rateLimited('pk:' + clientKey, 30, 60000)) throw new HubError(429, 'rate', 'Too many attempts. Wait a minute.');
+        if (rateLimited('pk:' + clientKey, 120, 60000)) throw new HubError(429, 'rate', 'Too many attempts. Wait a minute.');
         const b = await body(req, MAX_BODY);
         const r = await service.passkeyLogin({ challengeId: b.challengeId, credential: b.credential, expectEmployeeId: b.expectEmployeeId, deviceToken: tokenFrom(c, 'hub_device') });
         return json(200, { ok: true, employee: r.employee, idleMinutes: r.idleMinutes, signTicket: r.signTicket, sharedDevice: false }, { 'Set-Cookie': cookie('hub_session', r.token, 12 * 3600) });

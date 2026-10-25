@@ -6,7 +6,7 @@ import { STR } from './i18n.js';
 import { api, ApiError } from './api.js';
 import { TAG_LOGO } from './logo.js';
 import qrcode from './qr.js';
-import { passkeySupported, platformAvailable, pkHint, setPkHint, offerSkipped, skipOffer, methodName, cancelled, registerPasskey, passkeySignIn } from './passkey.js';
+import { passkeySupported, platformAvailable, pkHint, setPkHint, offerSkipped, skipOffer, methodName, cancelled, registerPasskey, passkeySignIn, prepareRegister, prepareSignIn } from './passkey.js';
 
 const TZ = 'America/Los_Angeles';
 const root = document.getElementById('app');
@@ -221,6 +221,7 @@ async function loginView(msg) {
   </div></main>`);
   root.querySelector(msg ? '.alert' : '#main').focus();
   if (S.config.turnstileSiteKey) mountTurnstile(S.config.turnstileSiteKey);
+  if (pkLogin) prepareSignIn();
 }
 
 // One-time setup of the first (owner) account on an empty production database.
@@ -346,6 +347,7 @@ async function portalView(msg) {
     <p class="portal-mgmt"><a href="#/login?next=dash">${icon('lock')} ${t('portal_mgmt')}</a></p>
     ${p.demo ? await demoPeopleNote() : ''}
   </div>`, msg ? '.alert' : 'main h1');
+  if (pk) prepareSignIn();
 }
 
 // Demo/test copy only: show the invented people and their PINs so the open flow can be tried.
@@ -598,6 +600,7 @@ function renderSurvey() {
       ${step !== 'sign' ? html`<button class="btn primary" data-act="survey-next">${t('next')}</button>` : ''}
     </div></div>`);
   if (sv.quick && step === 'sign' && S.config && S.config.turnstileSiteKey && !sv.signedIn) mountTurnstile(S.config.turnstileSiteKey);
+  if (step === 'sign' && root.querySelector('[data-act=pk-sign]')) prepareSignIn({ purpose: 'sign', action: 'survey.submit', content: { answers: sv.answers, language: S.lang } });
 }
 
 function collectStep(validate = true) {
@@ -703,6 +706,7 @@ async function recordView(id, isNew) {
     ${rec.viewerIsOwner ? (surveyOpen() ? correctionForm(rec, o) : closedNote()) : ''}
     ${rec.viewerCanReview ? reviewPanel(rec) : ''}`);
   if (shared) startAutoSignout();
+  if (offer) prepareRegister();
 }
 
 function correctionForm(rec, o) {
@@ -1154,6 +1158,7 @@ async function renderPkList(note) {
   box2.innerHTML = String(html`${note ? html`<p class="success-inline">${note}</p>` : ''}
     ${list.length ? html`<ul class="plain-list">${list.map(p => html`<li><span><strong>${p.device}</strong> · ${t('pk_added')} ${fmtDate(p.createdAt)}${p.lastUsedAt ? html` · ${t('pk_last_used')} ${fmtDT(p.lastUsedAt)}` : ''}</span><button class="btn-quiet" data-act="pk-remove" data-id="${p.id}">${t('pk_remove')}</button></li>`)}</ul>` : html`<p class="meta">${t('pk_none')}</p>`}
     ${canAdd ? html`<button class="btn" data-act="pk-setup">${icon('lock')} ${tm('pk_setup_here')}</button>` : ''}`);
+  if (canAdd) prepareRegister();
 }
 
 async function adminView(params) {
