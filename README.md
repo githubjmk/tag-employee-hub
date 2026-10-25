@@ -10,6 +10,9 @@ The Armored Group / Innerspace Cases employee portal: weekly performance & safet
 - push to `main` → API tests → deploy the **test copy**;
 - **live** deploys only by hand: Actions → "Test and deploy" → Run workflow → `live`.
 
+## Cloud setup (2026-10-25)
+Repository secrets `CLOUDFLARE_API_TOKEN` ("GitHub deploy - TAG Employee Hub", Edit Cloudflare Workers template) and `CLOUDFLARE_ACCOUNT_ID` are set. No laptop is needed to deploy.
+
 ## Layout
 - `app/core` — service logic (sign-in, surveys, safety, audit chain), shared by every runtime
 - `app/web` — the page (vanilla JS, no build step)
