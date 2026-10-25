@@ -161,7 +161,8 @@ function keypad(target) {
 }
 
 // "Shared tablet" is a per-browser preference (not a secret), remembered for convenience.
-const sharedPref = () => { try { return localStorage.getItem('hub_shared') !== '0'; } catch { return true; } };
+// Default: unticked on a phone (it is the person's own), ticked on tablets and computers.
+const sharedPref = () => { try { const v = localStorage.getItem('hub_shared'); return v === null ? !isPhone() : v !== '0'; } catch { return !isPhone(); } };
 const setSharedPref = (on) => { try { localStorage.setItem('hub_shared', on ? '1' : '0'); } catch { /* ignore */ } };
 
 // Cloudflare Turnstile (bot check) on the sign-in form, only when the server has it configured.
@@ -1168,6 +1169,7 @@ async function renderPkList(note) {
   const box2 = document.getElementById('pk-list'); if (!box2) return;
   box2.innerHTML = String(html`${note ? html`<p class="success-inline">${note}</p>` : ''}
     ${list.length ? html`<ul class="plain-list">${list.map(p => html`<li><span><strong>${p.device}</strong> · ${t('pk_added')} ${fmtDate(p.createdAt)}${p.lastUsedAt ? html` · ${t('pk_last_used')} ${fmtDT(p.lastUsedAt)}` : ''}</span><button class="btn-quiet" data-act="pk-remove" data-id="${p.id}">${t('pk_remove')}</button></li>`)}</ul>` : html`<p class="meta">${t('pk_none')}</p>`}
+    ${S.me.sharedDevice ? html`<p class="alert-soft" role="note">${t('pk_shared_note')}</p><button class="btn" data-act="pk-relogin">${t('pk_relogin')}</button>` : ''}
     ${canAdd ? html`<details class="pk-add"><summary><strong>${tm('pk_setup_here')}</strong></summary>${pkSetupBlock()}</details>` : ''}`);
 }
 
@@ -1313,6 +1315,7 @@ root.addEventListener('click', async (ev) => {
       return location.hash.startsWith('#/login') ? loginView(msg) : portalView(msg);
     }
   }
+  if (act === 'pk-relogin') { setSharedPref(false); await wipe(); return go('#/login'); }
   if (act === 'pk-forget') { setPkHint(null); return portalView(); }
   if (act === 'pk-sign') return pkSignSubmit(el);
   if (act === 'pk-usepin') { if (S.survey) { S.survey.usePin = true; S.survey.error = null; renderSurvey(); const f = root.querySelector('#signpin'); if (f) f.focus(); } return; }

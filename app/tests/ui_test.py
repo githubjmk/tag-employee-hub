@@ -737,6 +737,12 @@ def t_passkeys(browser, errors):
         ctx, pg = new_page(browser, PHONE, errors, user_agent=IPHONE_UA)
         cdp, auth = virtual_authenticator(ctx, pg)
         maria = srv.person('E-104')
+        # Signed in as a shared device: the page says why Face ID can't be added and offers to sign in again
+        login(pg, srv, 'E-104', shared=True)
+        pg.goto(srv.base + '#/more'); pg.wait_for_selector('#pk-list [data-act=pk-relogin]')
+        expect(pg.locator('#pk-list details.pk-add')).to_have_count(0)
+        pg.click('[data-act=pk-relogin]'); pg.wait_for_selector('form[data-form=login]')
+        assert not pg.locator('input[name=sharedDevice]').is_checked(), 'shared box unticked after "sign in again as my own phone"'
         login(pg, srv, 'E-104', shared=False)
         pg.goto(srv.base + '#/more'); pg.wait_for_selector('#pk-list details.pk-add')
         pg.click('#pk-list details.pk-add summary')
