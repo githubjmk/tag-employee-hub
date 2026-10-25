@@ -17,6 +17,7 @@ import {
 import { getTemplate, TEMPLATES, ASSIGNABLE, SUPERVISOR_ACK, SEEN_STATEMENT, ESIGN_CONSENT_V1, allQuestions } from './templates.js';
 import { verifyTotp, base32Encode } from './totp.js';
 import { internalRolesFor, describeRoles, permissionsOf } from './permissions.js';
+import { verifyRegistration, verifyAssertion, b64urlEncode, WebAuthnError, ALG } from './webauthn.js';
 
 export class HubError extends Error {
   constructor(status, code, message) { super(message || code); this.status = status; this.code = code; }
@@ -366,16 +367,37 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   // R1.1 also asked for a typed name; it added friction without adding attribution
   // (the PIN already proves who signed), so it was dropped.
   const SIGN_METHOD = 'Signed-in session + acknowledgment checked + PIN re-entered at signing';
-  async function requireSignature(ctx, { affirm, signPin }) {
+  const SIGN_METHOD_PASSKEY = 'Signed-in session + acknowledgment checked + passkey (Face ID / fingerprint / phone lock) on the person\'s own phone at signing';
+  // R1.3: on a phone with a passkey, Face ID (or fingerprint / phone passcode) replaces the PIN.
+  // The passkey approval is bound to the exact content being signed: the page asks for a
+  // challenge for these fields, the phone signs it, and the server re-computes the hash here.
+  const SIGN_BIND = { 'survey.submit': ['answers', 'language'], 'survey.amend': ['submissionId', 'note', 'corrections'] };
+  const bindHash = (action, src) => crypto.sha256(canonical({ action, ...Object.fromEntries((SIGN_BIND[action] || []).map(k => [k, src[k] ?? null])) }));
+  async function requireSignature(ctx, input, action) {
+    const { affirm, signPin, signTicket } = input;
     if (affirm !== true) throw bad('Check the box to confirm you are signing.', 'no_affirm');
+    if (signTicket !== undefined && signTicket !== null && signTicket !== '') {
+      const c = SIGN_BIND[action] && db.get('SELECT * FROM webauthn_challenges WHERE id=?', [String(signTicket)]);
+      const fresh = c && c.verified_at && new Date(now().getTime() - 5 * 60000).toISOString() < c.verified_at;
+      if (!c || c.purpose !== 'sign' || c.verified_employee !== ctx.me.id || c.consumed_at || !fresh || c.action !== action || c.content_hash !== bindHash(action, input)) {
+        tx(() => audit(ctx.me.id, 'sign.passkey_refused', 'employee', ctx.me.id, { action }));
+        throw new HubError(401, 'bad_sign_ticket', 'The Face ID approval did not match this report (or took too long). Nothing was signed. Try again.');
+      }
+      const pk = db.get('SELECT id, label FROM passkeys WHERE id=? AND removed_at IS NULL', [c.passkey_id]);
+      if (!pk) throw new HubError(401, 'bad_sign_ticket', 'That passkey was removed. Sign with your PIN.');
+      tx(() => db.run('UPDATE webauthn_challenges SET consumed_at=? WHERE id=? AND consumed_at IS NULL', [nowIso(), c.id]));
+      return { method: SIGN_METHOD_PASSKEY, passkey: { id: pk.id, device: pk.label, approvalId: c.id, boundContentSha256: c.content_hash } };
+    }
     if (!await verifyPinFor(ctx.me, signPin, ctx)) throw new HubError(401, 'bad_sign_pin', 'That PIN is not right. Nothing was signed.');
+    return { method: SIGN_METHOD };
   }
 
   const consentOf = (eid) => db.get('SELECT * FROM esign_consents WHERE employee_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1', [eid]);
-  const identityRecord = (ctx) => ({
-    method: 'Signed-in session + PIN re-entered at signing (acknowledgment checked)',
-    device: ctx.session.device_id ? `Registered shop device ${ctx.session.device_id}` : (ctx.session.shared_device ? 'Shared device (chosen at sign-in)' : 'Personal device'),
-    sessionStartedAt: ctx.session.created_at
+  const identityRecord = (ctx, sig = { method: SIGN_METHOD }) => ({
+    method: sig.passkey ? 'Signed-in session + passkey approved on own phone at signing (acknowledgment checked)' : 'Signed-in session + PIN re-entered at signing (acknowledgment checked)',
+    device: ctx.session.device_id ? `Registered shop device ${ctx.session.device_id}` : sig.passkey ? `Own phone (${sig.passkey.device}, passkey ${sig.passkey.id})` : (ctx.session.shared_device ? 'Shared device (chosen at sign-in)' : 'Personal device'),
+    sessionStartedAt: ctx.session.created_at,
+    ...(sig.passkey ? { passkey: sig.passkey } : {})
   });
 
   // ---------------------------------------------------------------- record assembly
@@ -519,8 +541,166 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     });
   }
 
+  const A = Object.create(null);   // actions, by name (see call())
+
+  // ---------------------------------------------------------------- passkeys (R1.3, owner 2026-10-25)
+  // On a person's own phone, Face ID / fingerprint / the phone's passcode replaces the PIN for
+  // signing in and for signing the weekly report. The PIN keeps working everywhere. Passkeys are
+  // refused on registered shop tablets (shared devices keep name + PIN). The phone keeps the
+  // private key; the Hub stores only the public key. Biometrics never leave the phone.
+  const PK_CHALLENGE_MIN = 5, PK_MAX_PER_PERSON = 10;
+  const rpOk = (rp) => !!rp && typeof rp.rpId === 'string' && typeof rp.origin === 'string' && /^[a-z0-9.-]{1,200}$/.test(rp.rpId) && rp.origin.length < 250;
+  const userHandle = (eid) => b64urlEncode(Uint8Array.from(crypto.sha256('passkey-user|' + eid).slice(0, 32).match(/../g), h => parseInt(h, 16)));
+  const deviceLabel = (s) => String(s || '').replace(/[^\p{L}\p{N} ()'.,-]/gu, '').replace(/\s+/g, ' ').trim().slice(0, 40) || 'Phone';
+  const pkView = (p) => ({ id: p.id, device: p.label, createdAt: p.created_at, lastUsedAt: p.last_used_at, address: p.rp_id, synced: !!p.backed_up });
+  const livePasskeys = (eid) => db.all('SELECT * FROM passkeys WHERE employee_id=? AND removed_at IS NULL ORDER BY created_at', [eid]);
+  const PK_SHOP_TABLET = 'Face ID sign-in is for your own phone. On the shop tablet, use your name and PIN.';
+
+  function newChallenge({ purpose, employeeId = null, rp, action = null, contentHash = null }) {
+    if (!rpOk(rp)) throw bad('Passkeys need the Hub\'s web address.', 'no_rp');
+    const cid = id('WAC');
+    const challenge = b64urlEncode(Uint8Array.from(crypto.randomHex(32).match(/../g), h => parseInt(h, 16)));
+    const n = now();
+    tx(() => {
+      db.run('DELETE FROM webauthn_challenges WHERE expires_at < ?', [new Date(n.getTime() - 3600000).toISOString()]);
+      db.run(`INSERT INTO webauthn_challenges (id, purpose, employee_id, challenge, rp_id, origin, action, content_hash, created_at, expires_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        [cid, purpose, employeeId, challenge, rp.rpId, rp.origin, action, contentHash, n.toISOString(), new Date(n.getTime() + PK_CHALLENGE_MIN * 60000).toISOString()]);
+    });
+    return { cid, challenge };
+  }
+  function openChallenge(cid, purposes) {
+    const c = db.get('SELECT * FROM webauthn_challenges WHERE id=?', [String(cid || '').slice(0, 40)]);
+    if (!c || !purposes.includes(c.purpose) || c.verified_at || c.consumed_at || c.expires_at < nowIso()) throw new HubError(401, 'passkey_expired', 'That took too long. Try again.');
+    return c;
+  }
+  const consumeChallenge = (cid) => db.run('UPDATE webauthn_challenges SET consumed_at=? WHERE id=? AND consumed_at IS NULL', [nowIso(), cid]);
+
+  A['passkey.registerOptions'] = (ctx) => {
+    if (ctx.session.device_id) throw deny(PK_SHOP_TABLET);
+    const mine = livePasskeys(ctx.me.id);
+    if (mine.length >= PK_MAX_PER_PERSON) throw bad(`You already have ${PK_MAX_PER_PERSON} phones set up. Remove one under More first.`, 'passkey_limit');
+    const { cid, challenge } = newChallenge({ purpose: 'register', employeeId: ctx.me.id, rp: ctx.rp });
+    return { challengeId: cid, publicKey: {
+      challenge, rp: { id: ctx.rp.rpId, name: 'TAG Employee Hub' },
+      user: { id: userHandle(ctx.me.id), name: ctx.me.id, displayName: ctx.me.display_name },
+      pubKeyCredParams: [{ type: 'public-key', alg: ALG.ES256 }, { type: 'public-key', alg: ALG.RS256 }],
+      authenticatorSelection: { authenticatorAttachment: 'platform', residentKey: 'required', requireResidentKey: true, userVerification: 'required' },
+      excludeCredentials: mine.map(m => ({ type: 'public-key', id: m.credential_id })),
+      attestation: 'none', timeout: 120000, hints: ['client-device']
+    } };
+  };
+  A['passkey.register'] = async (ctx, { challengeId, credential, label }) => {
+    if (ctx.session.device_id) throw deny(PK_SHOP_TABLET);
+    const c = openChallenge(challengeId, ['register']);
+    if (c.employee_id !== ctx.me.id) throw new HubError(401, 'passkey_expired', 'That took too long. Try again.');
+    let r;
+    try { r = await verifyRegistration({ credential, challenge: c.challenge, origin: c.origin, rpId: c.rp_id }); }
+    catch (e) {
+      if (!(e instanceof WebAuthnError)) throw e;
+      tx(() => { consumeChallenge(c.id); audit(ctx.me.id, 'passkey.register_failed', 'employee', ctx.me.id, { reason: e.reason }); });
+      throw bad(`Face ID could not be set up on this phone (${e.reason}). You can keep using your PIN.`, 'passkey_failed');
+    }
+    if (db.get('SELECT 1 FROM passkeys WHERE credential_id=?', [r.credentialId])) throw new HubError(409, 'passkey_exists', 'This phone is already set up.');
+    const pid = id('PK'), device = deviceLabel(label);
+    tx(() => {
+      consumeChallenge(c.id);
+      db.run(`INSERT INTO passkeys (id, employee_id, credential_id, public_key_jwk, alg, sign_count, rp_id, label, transports, backed_up, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        [pid, ctx.me.id, r.credentialId, JSON.stringify(r.jwk), r.alg, r.signCount, c.rp_id, device, JSON.stringify(r.transports), r.backedUp ? 1 : 0, nowIso()]);
+      audit(ctx.me.id, 'passkey.registered', 'employee', ctx.me.id, { passkeyId: pid, device, alg: r.alg, address: c.rp_id, synced: r.backedUp });
+    });
+    return { ok: true, passkey: pkView(db.get('SELECT * FROM passkeys WHERE id=?', [pid])), employee: pub(ctx.me) };
+  };
+  A['passkey.mine'] = (ctx) => livePasskeys(ctx.me.id).map(pkView);
+  A['passkey.remove'] = (ctx, { passkeyId }) => {
+    const p = db.get('SELECT * FROM passkeys WHERE id=? AND removed_at IS NULL', [String(passkeyId || '')]);
+    if (!p || p.employee_id !== ctx.me.id) throw notFound();
+    tx(() => {
+      db.run("UPDATE passkeys SET removed_at=?, removed_by=?, remove_reason='removed_by_owner' WHERE id=?", [nowIso(), ctx.me.id, p.id]);
+      audit(ctx.me.id, 'passkey.removed', 'employee', ctx.me.id, { passkeyId: p.id, device: p.label, by: 'owner' });
+    });
+    return { ok: true, passkeys: livePasskeys(ctx.me.id).map(pkView) };
+  };
+  // Lost or replaced phone: a full-access manager (or the person's own manager, for staff) removes
+  // the person's passkeys and ends their open sessions. Their PIN keeps working.
+  const canManagePasskeys = (ctx, e) => !!e && e.id !== ctx.me.id && (has(ctx, 'hr') || (has(ctx, 'supervisor') && e.supervisor_id === ctx.me.id && !isElevated(e)));
+  A['accounts.passkeys'] = (ctx, { employeeId }) => {
+    const e = emp(employeeId);
+    if (!e || !(canManagePasskeys(ctx, e) || e.id === ctx.me.id)) throw notFound();
+    return { employee: pub(e), passkeys: livePasskeys(e.id).map(pkView), canRemove: canManagePasskeys(ctx, e) };
+  };
+  A['accounts.removePasskeys'] = (ctx, { employeeId, passkeyId }) => {
+    const e = emp(employeeId);
+    if (!e) throw notFound();
+    if (!canManagePasskeys(ctx, e)) throw deny(e.id === ctx.me.id ? 'Remove your own phones under More.' : 'Only a full-access manager, or the person\'s own manager, can remove Face ID phones.');
+    const list = livePasskeys(e.id).filter(p => !passkeyId || p.id === passkeyId);
+    if (passkeyId && !list.length) throw notFound();
+    tx(() => {
+      for (const p of list) db.run("UPDATE passkeys SET removed_at=?, removed_by=?, remove_reason='removed_by_management' WHERE id=?", [nowIso(), ctx.me.id, p.id]);
+      db.run("UPDATE sessions SET revoked_at=?, revoke_reason='passkeys_removed' WHERE employee_id=? AND revoked_at IS NULL", [nowIso(), e.id]);
+      audit(ctx.me.id, 'passkey.removed', 'employee', e.id, { passkeyIds: list.map(p => p.id), by: 'management' });
+    });
+    return { ok: true, removed: list.length, passkeys: livePasskeys(e.id).map(pkView) };
+  };
+
+  // Public (no session): challenge for "Sign in with Face ID" or "Sign with Face ID".
+  // purpose 'sign' binds the challenge to the exact content (see SIGN_BIND).
+  async function passkeyOptions({ rp, purpose, action, content }) {
+    return serial(async () => {
+      let contentHash = null, act = null, p = 'login';
+      if (purpose === 'sign') {
+        if (!SIGN_BIND[action] || !content || typeof content !== 'object' || Array.isArray(content)) throw bad('Nothing to sign.', 'invalid');
+        p = 'sign'; act = action; contentHash = bindHash(action, content);
+      }
+      const { cid, challenge } = newChallenge({ purpose: p, rp, action: act, contentHash });
+      return { challengeId: cid, publicKey: { challenge, rpId: rp.rpId, userVerification: 'required', allowCredentials: [], timeout: 120000, hints: ['client-device'] } };
+    });
+  }
+  // Public: verify the phone's approval and start a personal session. For a 'sign' challenge the
+  // verified approval also becomes a single-use signing ticket (5 minutes) for that content only.
+  async function passkeyLogin({ challengeId, credential, deviceToken, expectEmployeeId }) {
+    return serial(async () => {
+      const failed = new HubError(401, 'passkey_failed', 'Face ID sign-in did not work. Use your employee ID and PIN.');
+      if (deviceFromToken(deviceToken)) throw new HubError(403, 'passkey_shop_tablet', PK_SHOP_TABLET);
+      const c = openChallenge(challengeId, ['login', 'sign']);
+      const credId = credential && typeof credential.id === 'string' ? credential.id.slice(0, 1400) : '';
+      const pk = credId ? db.get('SELECT * FROM passkeys WHERE credential_id=? AND removed_at IS NULL', [credId]) : null;
+      if (!pk || pk.rp_id !== c.rp_id) {
+        tx(() => { consumeChallenge(c.id); audit(null, 'login.passkey_failed', 'passkey', credId.slice(0, 24) || null, { reason: pk ? 'other_address' : 'unknown_passkey' }); });
+        throw new HubError(401, 'passkey_unknown', 'Face ID on this phone is no longer set up for the Hub. Sign in with your PIN, then set it up again under More.');
+      }
+      let r;
+      try { r = await verifyAssertion({ credential, challenge: c.challenge, origin: c.origin, rpId: c.rp_id, stored: { jwk: JSON.parse(pk.public_key_jwk), alg: pk.alg, signCount: pk.sign_count } }); }
+      catch (e) {
+        if (!(e instanceof WebAuthnError)) throw e;
+        tx(() => { consumeChallenge(c.id); audit(pk.employee_id, 'login.passkey_failed', 'employee', pk.employee_id, { reason: e.reason, passkeyId: pk.id }); });
+        throw failed;
+      }
+      const e = emp(pk.employee_id);
+      if (!e || e.status === 'terminated') { tx(() => { consumeChallenge(c.id); audit(pk.employee_id, 'login.blocked', 'employee', pk.employee_id, { reason: 'separated', via: 'passkey' }); }); throw failed; }
+      if (e.hard_locked) { tx(() => consumeChallenge(c.id)); throw new HubError(423, 'hard_locked', HARD_LOCK_MSG); }
+      if (expectEmployeeId && String(expectEmployeeId).trim().toUpperCase() !== e.id) {
+        tx(() => consumeChallenge(c.id));
+        throw new HubError(409, 'passkey_other_person', `Face ID on this phone is set up for ${e.display_name} (${e.id}). Use the PIN to sign as someone else.`);
+      }
+      // Passkey with user verification = something you have (the phone) + something you are/know
+      // (Face ID, fingerprint or the phone's passcode), so it also counts as management's second step.
+      const elevated = isElevated(e);
+      const pol = elevated ? SESSION_POLICY.elevated : SESSION_POLICY.personal;
+      const token = crypto.randomHex(32);
+      const n = now();
+      tx(() => {
+        if (c.purpose === 'sign') db.run('UPDATE webauthn_challenges SET verified_employee=?, passkey_id=?, verified_at=? WHERE id=?', [e.id, pk.id, n.toISOString(), c.id]);
+        else db.run('UPDATE webauthn_challenges SET verified_employee=?, passkey_id=?, verified_at=?, consumed_at=? WHERE id=?', [e.id, pk.id, n.toISOString(), n.toISOString(), c.id]);
+        db.run('UPDATE passkeys SET sign_count=?, last_used_at=?, backed_up=? WHERE id=?', [r.signCount, n.toISOString(), r.backedUp ? 1 : 0, pk.id]);
+        db.run(`INSERT INTO sessions (token_hash, employee_id, device_id, shared_device, must_set_pin, created_at, last_seen, idle_minutes, absolute_expires_at)
+                VALUES (?,?,?,?,?,?,?,?,?)`, [crypto.sha256(token), e.id, null, 0, 0, n.toISOString(), n.toISOString(), pol.idleMinutes, new Date(n.getTime() + pol.absoluteMinutes * 60000).toISOString()]);
+        audit(e.id, 'login.passkey', 'employee', e.id, { passkeyId: pk.id, device: pk.label, forSigning: c.purpose === 'sign' });
+      });
+      return { token, idleMinutes: pol.idleMinutes, employee: pub(e), elevated, signTicket: c.purpose === 'sign' ? c.id : null, sharedDevice: false };
+    });
+  }
+
   // ---------------------------------------------------------------- actions
-  const A = Object.create(null);
   const PRE_PIN_ACTIONS = new Set(['session.me', 'auth.setPin']);
 
   A['session.me'] = (ctx) => {
@@ -607,6 +787,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     ...pub(e), language: e.preferred_language, startDate: e.start_date, endDate: e.end_date, reportsTo: e.supervisor_id, reportsToName: nameOf(e.supervisor_id),
     ...describeRoles(rolesOf(e)), pinSet: !!e.pin_hash, tempPinPending: !!e.setup_code_hash && e.setup_code_expires > nowIso(),
     locked: !!e.hard_locked || !!(e.locked_until && e.locked_until > nowIso()), mfaEnrolled: !!e.totp_secret,
+    passkeys: db.get('SELECT COUNT(*) n FROM passkeys WHERE employee_id=? AND removed_at IS NULL', [e.id]).n,
     smsPhone: has(ctx, 'hr') || e.id === ctx.me.id ? e.sms_phone : (e.sms_phone ? 'on file' : null)
   });
   const canSeeAccount = (ctx, e) => has(ctx, 'hr') || e.supervisor_id === ctx.me.id || e.id === ctx.me.id;
@@ -855,7 +1036,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     if (nowIso() < w.opensAt) throw new HubError(409, 'not_open', 'This week\'s report opens Friday.');
     const t = getTemplate(a.template_id);
     const clean = validateAnswers(t, answers, { requireAll: true });
-    await requireSignature(ctx, input);
+    const sig = await requireSignature(ctx, input, 'survey.submit');
     const lang = language === 'es' ? 'es' : 'en';
     const n = now();
     const subId = id('SUB');
@@ -870,9 +1051,9 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
         answerLabel: q.options ? q.options.find(o => o.value === clean[q.id])[lang] : undefined
       })),
       signature: {
-        method: SIGN_METHOD, statementShown: t.signature.statement[lang], signerName: ctx.me.display_name,
-        affirmativeAction: 'Checked the signing acknowledgment, re-entered PIN and tapped Sign & submit',
-        identity: identityRecord(ctx), consent: { id: consent.id, version: consent.version, at: consent.created_at, givenWithThisSignature: !!consent.isNew }
+        method: sig.method, statementShown: (sig.passkey && t.signature.statementPasskey ? t.signature.statementPasskey : t.signature.statement)[lang], signerName: ctx.me.display_name,
+        affirmativeAction: sig.passkey ? 'Checked the signing acknowledgment, tapped Sign with Face ID and approved on own phone' : 'Checked the signing acknowledgment, re-entered PIN and tapped Sign & submit',
+        identity: identityRecord(ctx, sig), consent: { id: consent.id, version: consent.version, at: consent.created_at, givenWithThisSignature: !!consent.isNew }
       },
       signedAtUtc: n.toISOString(), signedAtLocal: isoWithOffset(n, tz), late: n.toISOString() > w.dueAt, demo: cfg.demo
     };
@@ -932,12 +1113,12 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     if (!text || text.length > 2000) throw bad('Explain the correction (up to 2000 characters).');
     const a = db.get('SELECT template_id FROM survey_assignments WHERE id=?', [s.assignment_id]);
     const corr = corrections ? validateAnswers(getTemplate(a.template_id), corrections, { requireAll: false }) : {};
-    await requireSignature(ctx, input);
+    const sig = await requireSignature(ctx, input, 'survey.amend');
     const n = now(); const aid = id('AMD'); const lang = language === 'es' ? 'es' : 'en';
     const payload = {
       recordType: 'weekly-report-amendment', amendmentId: aid, amends: { submissionId: s.id, originalHash: s.payload_hash },
       employee: { id: ctx.me.id, displayName: ctx.me.display_name }, note: text, corrections: corr, language: lang,
-      signature: { method: SIGN_METHOD, signerName: ctx.me.display_name, identity: identityRecord(ctx) },
+      signature: { method: sig.method, signerName: ctx.me.display_name, identity: identityRecord(ctx, sig) },
       signedAtUtc: n.toISOString(), signedAtLocal: isoWithOffset(n, tz), demo: cfg.demo
     };
     const json = canonical(payload); const hash = crypto.sha256(json);
@@ -1032,7 +1213,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     if (closure === 'action_assigned' && !caCount) throw bad('Create the corrective action first, then close as "Action assigned".', 'closure');
     const c = String(comments || '').trim();
     if (c.length > 4000) throw bad('Comments are too long.');
-    await requireSignature(ctx, input);
+    await requireSignature(ctx, { ...input, signTicket: undefined }, 'review.signoff');   // PIN only
     const n = now(); const rid = id('REV');
     const lastAmend = db.get('SELECT id, payload_hash FROM survey_amendments WHERE submission_id=? ORDER BY signed_at DESC LIMIT 1', [s.id]);
     const payload = {
@@ -1752,11 +1933,13 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   }
 
   // ---------------------------------------------------------------- dispatcher
-  async function call(token, action, input = {}) {
+  // meta.rp = { rpId, origin } of the page (passkeys are bound to the web address).
+  async function call(token, action, input = {}, meta = {}) {
     if (typeof action !== 'string' || !Object.hasOwn(A, action)) throw new HubError(404, 'unknown_action', 'Unknown action');
     if (input === null || typeof input !== 'object' || Array.isArray(input)) throw bad('Bad input');
     return serial(async () => {
       const ctx = authenticate(token);
+      ctx.rp = meta.rp || null;
       if (ctx.session.must_set_pin && !PRE_PIN_ACTIONS.has(action)) throw new HubError(403, 'must_set_pin', 'Choose your PIN first.');
       return A[action](ctx, input);
     });
@@ -1827,8 +2010,8 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   // The file carries the audit-chain head and its own SHA-256 so a copy can be checked later.
   const BACKUP_TABLES = ['employees', 'devices', 'esign_consents', 'absences', 'survey_assignments', 'survey_drafts', 'survey_submissions', 'survey_amendments',
     'supervisor_reviews', 'review_events', 'paper_events', 'safety_reports', 'safety_events', 'corrective_actions', 'ca_events', 'attachments', 'notifications',
-    'notification_attempts', 'audit_events'];
-  const BACKUP_OMIT = { employees: ['pin_salt', 'pin_hash', 'setup_code_hash', 'setup_code_expires', 'setup_code_issued_by', 'totp_secret', 'totp_last_counter', 'failed_logins', 'locked_until', 'lockouts_24h', 'sim_fail_sms'], devices: ['token_hash'] };
+    'notification_attempts', 'audit_events', 'passkeys'];
+  const BACKUP_OMIT = { employees: ['pin_salt', 'pin_hash', 'setup_code_hash', 'setup_code_expires', 'setup_code_issued_by', 'totp_secret', 'totp_last_counter', 'failed_logins', 'locked_until', 'lockouts_24h', 'sim_fail_sms'], devices: ['token_hash'], passkeys: ['public_key_jwk', 'credential_id'] };
   A['admin.backupExport'] = (ctx) => {
     if (!has(ctx, 'hr')) throw deny('Only a full-access manager can export a backup.');
     tx(() => audit(ctx.me.id, 'backup.exported', 'system', 'all', { tables: BACKUP_TABLES.length }));
@@ -1868,7 +2051,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     return n;
   }
 
-  return { call, login, logout, tick, sealLegacySecrets, recordRestores, publicInfo, kioskRoster, dispatchDue, deliveryReceipt, bootstrap, bootstrapStatus, bootstrapRecover, ensureAssignments, actions: Object.keys(A), config: cfg, _audit: audit, _serial: serial, _weekFor: weekFor };
+  return { call, login, logout, passkeyOptions, passkeyLogin, tick, sealLegacySecrets, recordRestores, publicInfo, kioskRoster, dispatchDue, deliveryReceipt, bootstrap, bootstrapStatus, bootstrapRecover, ensureAssignments, actions: Object.keys(A), config: cfg, _audit: audit, _serial: serial, _weekFor: weekFor };
 }
 
 export const TYPE_LABEL = {

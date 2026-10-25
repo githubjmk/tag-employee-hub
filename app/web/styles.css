@@ -448,3 +448,15 @@ details.demo-panel > summary { color: var(--note-ink); padding: 0; min-height: 0
 .auth-steps li { margin: 4px 0; }
 img.qr { display: block; width: 220px; height: 220px; image-rendering: pixelated; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 6px; margin: 6px 0 10px; }
 .auth-manual summary { cursor: pointer; font-weight: 600; margin: 6px 0; }
+
+/* Passkeys (Face ID / fingerprint) — R1.3 */
+.pk-btn { gap: 8px; }
+.pk-btn small { font-weight: 500; opacity: .85; }
+.pk-card { border-left: 4px solid var(--gold); }
+.pk-hello { font-size: 1.1rem; margin: 0 0 10px; }
+.pk-card .link { margin-top: 6px; }
+.pk-offer { border: 2px solid var(--gold); }
+.pk-offer h2 { margin-top: 0; }
+.pk-alt { text-align: center; margin: 10px 0 0; }
+.or-line { display: flex; align-items: center; gap: 10px; color: var(--ink-2); font-size: .9rem; margin: 14px 0; }
+.or-line::before, .or-line::after { content: ""; flex: 1; border-top: 1px solid var(--line); }

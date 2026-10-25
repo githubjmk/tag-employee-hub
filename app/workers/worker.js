@@ -11,7 +11,7 @@ import { createService } from '../core/service.js';
 import { makeCrypto } from '../core/webcrypto.js';
 import { seed, demoPeople, DEMO_NOW, PILOT_START_WEEK } from '../core/seed.js';
 import { createHttpHandler, makeTurnstile, SEC_HEADERS } from '../core/http.js';
-import { SCHEMA } from '../core/schema.js';
+import { SCHEMA, UPGRADES } from '../core/schema.js';
 import { makeGoToSms } from '../core/goto-sms.js';
 import { doDb, persistentClock } from './do-adapters.js';
 
@@ -65,6 +65,7 @@ export class Hub extends DurableObject {
       }
       db.run("INSERT INTO meta (k, v) VALUES ('seeded', ?)", [demo ? 'demo ' + new Date().toISOString() : 'empty ' + new Date().toISOString()]);
     } else if (demo && !clock.resume()) clock.runFrom(env.HUB_DEMO_NOW || DEMO_NOW);
+    db.exec(UPGRADES);                       // tables added since go-live (idempotent)
     await service.sealLegacySecrets();      // S4: authenticator secrets encrypted at rest
     try { await service.recordRestores(); } catch (e) { console.error('restore log not recorded yet', e); }
     this.hub = { db, clock, crypto, service };

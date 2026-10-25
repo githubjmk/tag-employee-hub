@@ -6,6 +6,7 @@ import { STR } from './i18n.js';
 import { api, ApiError } from './api.js';
 import { TAG_LOGO } from './logo.js';
 import qrcode from './qr.js';
+import { passkeySupported, platformAvailable, pkHint, setPkHint, offerSkipped, skipOffer, methodName, cancelled, registerPasskey, passkeySignIn } from './passkey.js';
 
 const TZ = 'America/Los_Angeles';
 const root = document.getElementById('app');
@@ -38,6 +39,10 @@ const announce = (m) => { live.textContent = ''; setTimeout(() => { live.textCon
 const go = (h) => { if (location.hash === h) route(); else location.hash = h; };
 const mondayOf = (iso) => { const d = new Date(new Date(iso).toLocaleString('en-US', { timeZone: TZ })); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const isDemo = () => !!((S.config && S.config.demo) || (S.pub && S.pub.demo) || (S.me && S.me.demo));
+// Passkey wording for this device ("Face ID", "fingerprint", "Windows Hello").
+const tm = (k) => t(k).replaceAll('{m}', methodName(S.lang));
+// Face ID is offered only on a person's own device: never on a registered shop tablet.
+const pkReadyFor = (eid) => { const h = pkHint(); return !!h && h.id === eid && passkeySupported() && !S.roster && !(S.me && S.me.deviceId); };
 const addDays = (ymd, n) => { const d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 
 function errMsg(e) {
@@ -186,10 +191,12 @@ async function loginView(msg) {
   try { if (!S.people) S.people = await api.demoPeople(); } catch { S.people = []; }
   const roster = await rosterOrNull();
   const step = S.signinStep;
+  const pkLogin = !roster && passkeySupported() ? (pkHint() || ((await platformAvailable()) ? { id: '', name: '' } : null)) : null;
   root.innerHTML = String(html`
   <main id="main" class="login" tabindex="-1"><div class="login-card">
     <div class="login-brand logo-top"><img class="login-logo" src="${TAG_LOGO}" alt="The Armored Group" width="600" height="122"><div><p class="eyebrow">${t('portal_name')} · Innerspace Cases</p><h1>${t('appName')}</h1></div></div>
     ${msg ? html`<p class="alert" role="alert">${msg}</p>` : ''}
+    ${pkLogin ? html`<button type="button" class="btn primary wide pk-btn" data-act="pk-login">${icon('lock')} ${t('pk_signin')} ${methodName(S.lang)}${pkLogin.name ? html` <small>(${pkLogin.name})</small>` : ''}</button><p class="or-line"><span>${t('pk_or')}</span></p>` : ''}
     <form data-form="login" novalidate>
       ${roster && roster.people.length ? html`<p class="field-label">${t('who_tap')}</p><div class="name-grid">${roster.people.map(x => html`<button type="button" class="name-btn ${x.id === S.signinId ? 'on' : ''}" data-act="pick" data-id="${x.id}">${x.name}</button>`)}</div>` : ''}
       <label class="field"><span>${t('signin_id')}</span><input name="employeeId" autocomplete="username" autocapitalize="characters" spellcheck="false" required value="${S.signinId}" placeholder="E-104"></label>
@@ -321,12 +328,16 @@ async function portalView(msg) {
   let p;
   try { p = await publicInfo(); } catch (e) { return render('#/home', html`<div class="empty" role="alert"><h1>${t('err_generic')}</h1><p>${errMsg(e)}</p><button class="btn" data-act="retry">${t('continue')}</button></div>`); }
   const w = p.surveyWindow;
+  const pk = pkHint() && passkeySupported() && !(await rosterOrNull()) ? pkHint() : null;
   render('#/home', html`<div class="portal-public">
     ${msg ? html`<p class="alert" role="alert">${msg}</p>` : ''}
     <section class="portal-hero"><p class="eyebrow">The Armored Group · ${fmtDate(p.now, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
       <h1>${t('portal_name')}</h1><p class="hero-sub">${t('portal_sub')}</p><span class="gold-rule" aria-hidden="true"></span></section>
+    ${pk ? html`<section class="card pk-card"><p class="pk-hello">${t('pk_hello')}, <strong>${pk.name || pk.id}</strong></p>
+      <button class="btn primary wide pk-btn" data-act="pk-login">${icon('lock')} ${t('pk_signin')} ${methodName(S.lang)}</button>
+      <p><button type="button" class="link" data-act="pk-forget">${t('pk_forget')}</button></p></section>` : ''}
     <div class="big-actions">
-      ${w.openNow ? html`<a class="big-action primary" href="#/r">${icon('check')}<span><strong>${t('home_survey')}</strong><small>${t('week_of')} ${fmtDate(p.week.start)} · ${t('portal_survey_sub')}</small></span></a>`
+      ${w.openNow ? html`<a class="big-action primary" href="#/r">${icon('check')}<span><strong>${t('home_survey')}</strong><small>${t('week_of')} ${fmtDate(p.week.start)} · ${pk ? tm('portal_survey_sub_pk') : t('portal_survey_sub')}</small></span></a>`
         : html`<div class="big-action closed">${icon('clock')}<span><strong>${t('home_survey')}</strong><small>${t('closed_title')} · ${t('closed_next')} ${fmtDT(w.nextOpen)}</small></span></div>`}
       <a class="big-action safety" href="#/login?next=safety">${icon('alert')}<span><strong>${t('home_safety')}</strong><small>${t('home_safety_sub')}</small></span></a>
       <a class="big-action" href="#/login?next=checkin">${icon('clock')}<span><strong>${t('home_history')}</strong><small>${t('home_history_sub')}</small></span></a>
@@ -351,7 +362,11 @@ async function quickReport() {
   await loadConfig();
   const p = await publicInfo();
   if (!p.surveyWindow.openNow) return portalView();
-  if (!S.survey || !S.survey.quick) S.survey = { quick: true, who: null, tpl: p.template, week: p.week, answers: {}, step: -1, error: null };
+  if (!S.survey || !S.survey.quick) {
+    S.survey = { quick: true, who: null, tpl: p.template, week: p.week, answers: {}, step: -1, error: null };
+    const roster = await rosterOrNull(), h = pkHint();
+    if (!roster && h && passkeySupported()) { S.survey.who = { id: h.id, name: h.name || null }; S.survey.step = 0; }
+  }
   if (S.survey.step < 0) return renderWho(await rosterOrNull());
   renderSurvey();
 }
@@ -378,15 +393,55 @@ function quickSignForm(sv) {
     <p class="signing-as">${t('sign_as')} <strong>${who.name || who.id}</strong>${who.name ? html` (${who.id})` : ''} <button type="button" class="link" data-act="quick-who">${t('not_you')}</button></p>
     <div class="consent-text"><p class="eyebrow">${t('esign')} · ${c.version}</p><p>${L(c.text)}</p></div>
     <label class="check"><input type="checkbox" name="affirm" required ${sv.affirm ? raw('checked') : ''}><span>${t('sign_affirm_consent')}</span></label>
-    ${sv.mustSetPin ? html`<p class="alert-soft" role="note">${t('quick_new_pin')}</p>
+    ${pkReadyFor(who.id) && !sv.mustSetPin && !sv.usePin ? pkSignButtons(sv) : html`${sv.mustSetPin ? html`<p class="alert-soft" role="note">${t('quick_new_pin')}</p>
         <label class="field"><span>${t('setpin_new')}</span><input id="np" name="newPin" type="password" inputmode="numeric" maxlength="12" autocomplete="new-password" required></label>
         <label class="field"><span>${t('setpin_confirm')}</span><input id="cp" name="confirmPin" type="password" inputmode="numeric" maxlength="12" autocomplete="new-password" required></label>`
       : html`<label class="field"><span>${t('sign_pin')}</span><input id="signpin" name="signPin" type="password" inputmode="numeric" maxlength="12" autocomplete="off" required></label>${keypad('signpin')}`}
     ${sv.needTotp ? html`<label class="field"><span>${t('signin_code')}</span><input name="totp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label><p class="hint">${t('signin_code_help')}</p>` : ''}
     ${S.config && S.config.turnstileSiteKey && !sv.signedIn ? html`<div id="ts-box" class="turnstile"></div>` : ''}
     ${sv.error ? html`<p class="alert" role="alert">${sv.error}</p>` : ''}
-    <button class="btn primary wide" type="submit" data-submit>${t('sign_submit')}</button>
+    <button class="btn primary wide" type="submit" data-submit>${t('sign_submit')}</button>`}
   </form>`;
+}
+// "Sign with Face ID" (PIN as a fallback link). The approval covers exactly the answers shown.
+const pkSignButtons = (sv) => html`${sv.error ? html`<p class="alert" role="alert">${sv.error}</p>` : ''}
+  <button type="button" class="btn primary wide pk-btn" data-act="pk-sign">${icon('lock')} ${t('pk_sign')} ${methodName(S.lang)}</button>
+  <p class="pk-alt"><button type="button" class="link" data-act="pk-usepin">${t('pk_use_pin')}</button></p>`;
+async function pkSignSubmit(btn) {
+  const sv = S.survey, form = btn.closest('form');
+  sv.affirm = form.elements.affirm.checked;
+  if (!sv.affirm) { sv.error = sv.quick || !S.me.consent ? t('sign_affirm_consent') : t('sign_affirm'); return renderSurvey(); }
+  const eid = sv.quick ? sv.who.id : S.me.employee.id;
+  if (!sv.quick) clearTimeout(saveTimer);
+  btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = t('submitting');
+  sv.submitting = true;
+  try {
+    const content = { answers: sv.answers, language: S.lang };
+    const hadConsent = !sv.quick && !!S.me.consent;
+    const r = await passkeySignIn({ purpose: 'sign', action: 'survey.submit', content, expectEmployeeId: eid });
+    S.me = await api.call('session.me', {});
+    if (S.me.consent && S.me.consent.choice === 'paper') throw new ApiError(409, 'paper_chosen', t('paper_chosen'));
+    let assignmentId = sv.assignmentId;
+    if (sv.quick) {
+      const h = await api.call('home', {});
+      const open = h.surveys.slice().reverse().find(x => ['open', 'missing'].includes(x.state));
+      if (!open) { const done = h.surveys.slice().reverse().find(x => x.submissionId); S.survey = null; await loadMe(); return go(done ? '#/record/' + done.submissionId : '#/home'); }
+      assignmentId = open.assignmentId;
+    }
+    sv.idem = sv.idem || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
+    const res = await api.call('survey.submit', { assignmentId, ...content, affirm: true, esignConsent: sv.quick || !hadConsent, idempotencyKey: sv.idem, signTicket: r.signTicket });
+    S.survey = null;
+    await loadMe();
+    go('#/record/' + res.submissionId + '?new=1');
+  } catch (e) {
+    sv.submitting = false;
+    if (cancelled(e)) sv.error = t('pk_cancelled');
+    else {
+      sv.error = errMsg(e);
+      if (e instanceof ApiError && ['passkey_unknown', 'passkey_other_person'].includes(e.code)) { if (e.code === 'passkey_unknown') setPkHint(null); sv.usePin = true; }
+    }
+    renderSurvey(); announce(sv.error);
+  }
 }
 async function quickSubmit(form, btn) {
   const sv = S.survey, f = form.elements;
@@ -517,6 +572,7 @@ function renderSurvey() {
       ${step === 'safety' ? html`<a class="safety-cta small" href="#/safety/new">${icon('alert')}<span><strong>${t('safety_now')}</strong><small>${t('safety_now_sub')}</small></span></a>` : ''}
       <form data-form="survey-step" novalidate>${sec.questions.map(questionField)}</form>`;
   } else {
+    const pkPath = !sv.usePin && (sv.quick ? !!sv.who && !sv.mustSetPin && pkReadyFor(sv.who.id) : !!S.me && pkReadyFor(S.me.employee.id));
     const rows = tpl.sections.map((sec, si) => sec.questions.map(q => {
       const v = sv.answers[q.id];
       const opt = q.options ? q.options.find(o => String(o.value) === String(v)) : null;
@@ -524,15 +580,15 @@ function renderSurvey() {
         <button class="link" data-act="goto-step" data-step="${si}">${t('edit')}</button></dd></div>`;
     }));
     body = html`<h1>${t('review_sign')}</h1>${period}<dl class="review card">${rows}</dl>
-      <div class="sign-box"><p>${L(tpl.signature.statement)}</p></div>
+      <div class="sign-box"><p>${L(pkPath && tpl.signature.statementPasskey ? tpl.signature.statementPasskey : tpl.signature.statement)}</p></div>
       ${sv.quick ? quickSignForm(sv) : S.me.consent && S.me.consent.choice === 'paper' ? html`<p class="alert-soft" role="note">${t('paper_chosen')}</p>` : html`<form data-form="sign" novalidate class="card emphasis">
         <p class="signing-as">${t('sign_as')} <strong>${S.me.employee.name}</strong> (${S.me.employee.id})</p>
         ${!S.me.consent ? html`<div class="consent-text"><p class="eyebrow">${t('esign')} · ${S.consentText.version}</p><p>${L(S.consentText.text)}</p></div>` : ''}
         <label class="check"><input type="checkbox" name="affirm" required ${sv.affirm ? raw('checked') : ''}><span>${!S.me.consent ? t('sign_affirm_consent') : t('sign_affirm')}</span></label>
-        <label class="field"><span>${t('sign_pin')}</span><input id="signpin" name="signPin" type="password" inputmode="numeric" maxlength="12" autocomplete="off" required></label>
+        ${pkReadyFor(S.me.employee.id) && !sv.usePin ? pkSignButtons(sv) : html`<label class="field"><span>${t('sign_pin')}</span><input id="signpin" name="signPin" type="password" inputmode="numeric" maxlength="12" autocomplete="off" required></label>
         ${S.me.sharedDevice ? keypad('signpin') : ''}
         ${sv.error ? html`<p class="alert" role="alert">${sv.error}</p>` : ''}
-        <button class="btn primary wide" type="submit" data-submit>${t('sign_submit')}</button>
+        <button class="btn primary wide" type="submit" data-submit>${t('sign_submit')}</button>`}
       </form>`}
       ${isDemo() ? html`<p class="fine">DEMO: no signature made in this prototype is legally operative. Questionnaire ${tpl.id}.</p>` : html`<p class="fine">Questionnaire ${tpl.id}.</p>`}`;
   }
@@ -609,10 +665,13 @@ async function recordView(id, isNew) {
   const answers = o.answers.map(a => html`<div class="rv"><dt>${a.questionText}${a.origin !== 'paper' ? html` <span class="tag">${t('added_item')}</span>` : ''}</dt><dd>${a.answerLabel ? html`${typeof a.answer === 'number' ? a.answer + ' · ' : ''}${a.answerLabel}` : a.answer}</dd></div>`);
   const pendingQ = rv.pendingClarification;
   const shared = S.me.sharedDevice && rec.viewerIsOwner && isNew;
+  const offer = isNew && rec.viewerIsOwner && !S.me.deviceId && !S.roster && !pkReadyFor(S.me.employee.id) && !offerSkipped(S.me.employee.id) && await platformAvailable();
   render(active, html`
     ${isNew ? html`<div class="success" role="status"><h1>${t('confirm_title')}</h1><p>${t('confirm_sub')}</p>
       ${shared ? html`<p class="countdown" id="countdown">${t('auto_signout')} <strong id="cd">20</strong>${t('seconds')}</p><div class="row wrap"><button class="btn primary" data-act="signout">${t('signout_now')}</button><button class="btn" data-act="stay-after">${t('stay')}</button></div>` : ''}</div>`
       : html`<h1>${rec.viewerIsOwner ? t('record_title') : rec.employee.name + ' — weekly report'}</h1>`}
+    ${offer ? html`<section class="card pk-offer" id="pk-offer"><h2>${tm('pk_offer_title')}</h2><p>${tm('pk_offer_body')}</p>
+      <div class="row wrap"><button class="btn primary" data-act="pk-offer-yes">${icon('lock')} ${tm('pk_offer_yes')}</button><button class="btn" data-act="pk-offer-no">${t('pk_offer_no')}</button></div><div class="pk-out" role="status"></div></section>` : ''}
     ${o.demo ? html`<p class="demo-note">DEMO RECORD — synthetic data, not a legally operative signature.</p>` : ''}
     ${pendingQ && rec.viewerIsOwner && surveyOpen() ? html`<section class="card emphasis"><h2>${icon('q')} ${t('question_from')}</h2><blockquote>${pendingQ.text}<br><small>${pendingQ.by} · ${fmtDT(pendingQ.at)}</small></blockquote>
       <form data-form="respond" data-id="${rec.submissionId}" novalidate><label class="field"><span>${t('your_answer')}</span><textarea name="text" rows="3" maxlength="4000" required></textarea></label><button class="btn primary" type="submit">${t('answer_btn')}</button></form></section>` : ''}
@@ -961,10 +1020,11 @@ async function accountsView() {
     <div class="row between wrap"><div class="grow"><h2 class="h3">${a.name} <span class="meta">· ${a.id}</span></h2>
       <p class="meta"><span class="chip ${a.role === 'management' ? 'c-open' : ''}">${ROLE_LABEL(a)}</span>${a.fullAccess ? html` <span class="chip">Full access</span>` : ''}${a.safetyContact ? html` <span class="chip c-warn">Safety contact</span>` : ''}
         ${a.status !== 'active' ? html` <span class="chip c-missing">Deactivated ${a.endDate || ''}</span>` : ''}
-        · reports to ${a.reportsToName || '—'} · ${a.pinSet ? 'PIN set' : a.tempPinPending ? 'temporary PIN not used yet' : 'no PIN'}${a.locked ? html` · <span class="bad">locked</span>` : ''}${a.role === 'management' ? (a.mfaEnrolled ? ' · authenticator set up' : html` · <span class="bad">no authenticator</span>`) : ''}${a.safetyContact ? (a.smsPhone ? ' · texts on' : html` · <span class="warn">no mobile number for urgent texts</span>`) : ''}</p></div></div>
+        · reports to ${a.reportsToName || '—'} · ${a.pinSet ? 'PIN set' : a.tempPinPending ? 'temporary PIN not used yet' : 'no PIN'}${a.locked ? html` · <span class="bad">locked</span>` : ''}${a.role === 'management' ? (a.mfaEnrolled ? ' · authenticator set up' : html` · <span class="bad">no authenticator</span>`) : ''}${a.safetyContact ? (a.smsPhone ? ' · texts on' : html` · <span class="warn">no mobile number for urgent texts</span>`) : ''}${a.passkeys ? html` · Face ID on ${a.passkeys} phone${a.passkeys > 1 ? 's' : ''}` : ''}</p></div></div>
     ${a.id !== S.me.employee.id && a.status === 'active' ? html`<div class="row-actions">
       ${admin || (a.role === 'staff' && a.reportsTo === S.me.employee.id) ? html`<form data-form="setupcode" data-id="${a.id}"><button class="btn" type="submit">Reset PIN</button></form>` : ''}
       ${admin && a.role === 'management' ? html`<form data-form="enrolltotp" data-id="${a.id}"><button class="btn-quiet" type="submit">Reset authenticator</button></form>` : ''}
+      ${a.passkeys && (admin || (a.role === 'staff' && a.reportsTo === S.me.employee.id)) ? html`<form data-form="pkremoveall" data-id="${a.id}" data-name="${a.name}"><button class="btn-quiet" type="submit">Remove Face ID phones</button></form>` : ''}
       ${admin ? html`<form data-form="adeact" data-id="${a.id}"><button class="btn-quiet" type="submit">Deactivate</button></form>` : ''}
     </div>` : ''}
     ${a.status !== 'active' && admin ? html`<div class="row-actions"><form data-form="areact" data-id="${a.id}"><button class="btn" type="submit">Reactivate</button></form></div>` : ''}
@@ -1073,6 +1133,7 @@ function moreView() {
       <dt>${t('esign')}</dt><dd>${m.consent ? m.consent.choice : '—'} <button class="link" data-act="consent-change">${t('edit')}</button></dd>
       <dt>${t('language')}</dt><dd><button class="btn-quiet" data-act="lang">${S.lang === 'en' ? 'Español' : 'English'}</button></dd>
       <dt>Session</dt><dd>${m.sharedDevice ? t('shared_on') : 'Personal device'} · signs out after ${m.idleMinutes} min idle</dd></dl></section>
+    ${passkeySupported() && !m.deviceId ? html`<section class="card" id="pk-section"><h2>${t('pk_section')}</h2><p class="hint">${t('pk_help')}</p><div id="pk-list" role="status"><p class="meta">${t('loading')}</p></div></section>` : ''}
     <section class="card"><details><summary><strong>${t('change_pin')}</strong></summary><form data-form="changepin" novalidate>
       <label class="field"><span>${t('current_pin')}</span><input name="currentPin" type="password" inputmode="numeric" maxlength="12" autocomplete="current-password" required></label>
       <label class="field"><span>${t('setpin_new')}</span><input name="newPin" type="password" inputmode="numeric" maxlength="12" autocomplete="new-password" required></label>
@@ -1082,6 +1143,17 @@ function moreView() {
       { label: { en: 'My Work (Order Manager)', es: 'Mi trabajo (Order Manager)' }, url: 'https://thearmoredgroup.quickbase.com/db/bf5ukkqy7', note: 'Quickbase sign-in' },
       { label: { en: 'Time clock (QuickBooks Time)', es: 'Reloj (QuickBooks Time)' }, url: 'https://quickbooks.intuit.com/time-tracking/', note: 'Intuit sign-in' }].map(linkCard)}</div></section>
     <button class="btn wide" data-act="signout">${t('signout')}</button>`);
+  if (passkeySupported() && !m.deviceId) renderPkList();
+}
+async function renderPkList(note) {
+  const box = document.getElementById('pk-list'); if (!box) return;
+  let list;
+  try { list = await call('passkey.mine', {}); } catch (e) { if (!quiet(e)) box.textContent = errMsg(e); return; }
+  const canAdd = await platformAvailable();
+  const box2 = document.getElementById('pk-list'); if (!box2) return;
+  box2.innerHTML = String(html`${note ? html`<p class="success-inline">${note}</p>` : ''}
+    ${list.length ? html`<ul class="plain-list">${list.map(p => html`<li><span><strong>${p.device}</strong> · ${t('pk_added')} ${fmtDate(p.createdAt)}${p.lastUsedAt ? html` · ${t('pk_last_used')} ${fmtDT(p.lastUsedAt)}` : ''}</span><button class="btn-quiet" data-act="pk-remove" data-id="${p.id}">${t('pk_remove')}</button></li>`)}</ul>` : html`<p class="meta">${t('pk_none')}</p>`}
+    ${canAdd ? html`<button class="btn" data-act="pk-setup">${icon('lock')} ${tm('pk_setup_here')}</button>` : ''}`);
 }
 
 async function adminView(params) {
@@ -1211,6 +1283,47 @@ root.addEventListener('click', async (ev) => {
     return;
   }
   if (act === 'restart-setup') return setupView(null, null, true);
+  if (act === 'pk-login') {
+    el.disabled = true;
+    const h = pkHint();
+    try {
+      const r = await passkeySignIn({ expectEmployeeId: h && h.id && location.hash.indexOf('login') < 0 ? h.id : undefined });
+      await loadMe();
+      S.lang = S.me.employee.language || S.lang; document.documentElement.lang = S.lang;
+      return afterSignIn(r);
+    } catch (e) {
+      el.disabled = false;
+      if (e instanceof ApiError && e.code === 'passkey_unknown') setPkHint(null);
+      const msg = cancelled(e) ? t('pk_cancelled') : errMsg(e);
+      return location.hash.startsWith('#/login') ? loginView(msg) : portalView(msg);
+    }
+  }
+  if (act === 'pk-forget') { setPkHint(null); return portalView(); }
+  if (act === 'pk-sign') return pkSignSubmit(el);
+  if (act === 'pk-usepin') { if (S.survey) { S.survey.usePin = true; S.survey.error = null; renderSurvey(); const f = root.querySelector('#signpin'); if (f) f.focus(); } return; }
+  if (act === 'pk-offer-no') { skipOffer(S.me.employee.id); document.getElementById('pk-offer')?.remove(); return; }
+  if (act === 'pk-offer-yes' || act === 'pk-setup') {
+    clearInterval(S.autoOut); document.getElementById('countdown')?.remove();
+    el.disabled = true;
+    const out = act === 'pk-setup' ? null : document.querySelector('#pk-offer .pk-out');
+    try {
+      await registerPasskey();
+      if (out) { out.innerHTML = String(html`<p class="success-inline">${icon('shield')} ${tm('pk_done')}</p>`); el.closest('.row')?.remove(); }
+      else await renderPkList(tm('pk_done'));
+    } catch (e) {
+      el.disabled = false;
+      if (e && e.name === 'InvalidStateError') setPkHint(S.me.employee);   // this phone was already set up
+      const msg = cancelled(e) ? t('pk_cancelled') : (e && e.name === 'InvalidStateError') ? tm('pk_done') : errMsg(e);
+      if (out) out.textContent = msg; else await renderPkList(msg);
+    }
+    return;
+  }
+  if (act === 'pk-remove') {
+    el.disabled = true;
+    try { await call('passkey.remove', { passkeyId: el.dataset.id }); const left = await call('passkey.mine', {}); if (!left.length) setPkHint(null); return renderPkList(); }
+    catch (e) { el.disabled = false; if (!quiet(e)) announce(errMsg(e)); }
+    return;
+  }
   if (act === 'who') return chooseWho(el.dataset.id, el.dataset.name);
   if (act === 'quick-who') { if (S.survey && S.survey.quick) { collectStep(false); S.survey.step = -1; S.survey.error = null; return renderWho(S.roster); } return; }
   if (act === 'pick') { S.signinId = el.dataset.id; S.signinStep = 'pin'; await loginView(); const f = root.querySelector('#pin'); if (f) f.focus(); return; }
@@ -1363,6 +1476,12 @@ root.addEventListener('submit', async (ev) => {
     if (kind === 'changepin') { await call('auth.setPin', { currentPin: f.currentPin.value, newPin: f.newPin.value, confirmPin: f.confirmPin.value }); form.reset(); announce('PIN changed'); btn.disabled = false; return; }
     if (kind === 'regdevice') { await call('device.register', { label: f.label.value }); announce('This browser is now a registered shop tablet'); return route(); }
     if (kind === 'revdevice') { await call('device.revoke', { deviceId: form.dataset.id }); return route(); }
+    if (kind === 'pkremoveall') {
+      const r = await call('accounts.removePasskeys', { employeeId: form.dataset.id });
+      const out = form.closest('article')?.querySelector('.acct-out');
+      if (out) out.textContent = `Removed ${r.removed} phone${r.removed === 1 ? '' : 's'}. ${form.dataset.name} was signed out everywhere and now signs in with the PIN.`;
+      form.remove(); return;
+    }
     if (kind === 'enrolltotp') { const r = await call('auth.enrollTotp', { employeeId: form.dataset.id }); const out = form.closest('article')?.querySelector('.acct-out'); if (out) out.innerHTML = String(secretBox({ mfa: r })); btn.disabled = false; return; }
     if (kind === 'acreate' || kind === 'aupdate') {
       const input = { name: f.name.value, language: f.language.value, reportsTo: f.reportsTo.value || null, role: form.querySelector('input[name=role]:checked')?.value, fullAccess: f.fullAccess.checked, safetyContact: f.safetyContact.checked, smsPhone: f.smsPhone.value };

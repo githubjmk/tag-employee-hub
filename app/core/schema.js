@@ -10,8 +10,51 @@ const appendOnly = (t) => `
 CREATE TRIGGER ${t}_no_update BEFORE UPDATE ON ${t} BEGIN SELECT RAISE(ABORT, '${t} is append-only'); END;
 CREATE TRIGGER ${t}_no_delete BEFORE DELETE ON ${t} BEGIN SELECT RAISE(ABORT, '${t} is append-only'); END;`;
 
+// Tables added after the live Hub started (2026-10-16). Each statement is idempotent and runs
+// at every start, so an existing database gains them without a reset. Part of SCHEMA too.
+export const UPGRADES = `
+-- Passkeys (Face ID / fingerprint) on a person's own phone, R1.3. Public keys only; nothing secret.
+CREATE TABLE IF NOT EXISTS passkeys (
+  id TEXT PRIMARY KEY,
+  employee_id TEXT NOT NULL REFERENCES employees(id),
+  credential_id TEXT NOT NULL UNIQUE,  -- base64url, chosen by the phone
+  public_key_jwk TEXT NOT NULL,
+  alg INTEGER NOT NULL,
+  sign_count INTEGER NOT NULL DEFAULT 0,
+  rp_id TEXT NOT NULL,                 -- web address the passkey belongs to (hub.innerspacecases.com)
+  label TEXT NOT NULL,                 -- "iPhone", "Android phone", ...
+  transports TEXT,
+  backed_up INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  last_used_at TEXT,
+  removed_at TEXT,
+  removed_by TEXT,
+  remove_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS passkeys_employee ON passkeys (employee_id);
+-- One-time challenges for passkey ceremonies (5 minutes). A verified "sign" challenge becomes a
+-- single-use signing ticket bound to the exact answers that were shown.
+CREATE TABLE IF NOT EXISTS webauthn_challenges (
+  id TEXT PRIMARY KEY,
+  purpose TEXT NOT NULL CHECK (purpose IN ('register','login','sign')),
+  employee_id TEXT,
+  challenge TEXT NOT NULL,
+  rp_id TEXT NOT NULL,
+  origin TEXT NOT NULL,
+  action TEXT,
+  content_hash TEXT,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  verified_employee TEXT,
+  passkey_id TEXT,
+  verified_at TEXT,
+  consumed_at TEXT
+);
+`;
+
 export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+${UPGRADES}
 
 CREATE TABLE employees (
   id TEXT PRIMARY KEY,

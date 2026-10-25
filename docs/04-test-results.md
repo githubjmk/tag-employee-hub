@@ -12,6 +12,51 @@ Every result below comes from the final run on 2026-10-14, after all R1.2 change
 
 Wrangler 4.20.0 was used for the local Workers runs (`evidence/r12-wrangler-version.txt`). Nothing was deployed.
 
+## R1.3 Face ID / fingerprint sign-in (passkeys), 2026-10-25
+
+| Suite | Runtime | Result |
+|---|---|---|
+| API (`npm test`: 45 existing + 11 new passkey tests PK-01…PK-11) | Node 22 | **56/56 passed** |
+| Browser suite U1–U13 (U13 = Face ID, Chromium virtual authenticator) | Node server | **13/13 passed** |
+| Browser suite U1–U13 | Local Cloudflare Workers + Durable Object (wrangler 4.92.0) | **13/13 passed** |
+| Workers smoke W1–W6, including a full restart | Local Workers | **6/6 passed** |
+| Upgrade check: a database made by the code that is live today, then started with the new code | Local Workers, production mode | account kept; new tables added; Face ID challenge works |
+
+What the passkey tests check (real ECDSA P-256 and RSA keys, real CBOR/DER encodings from a software authenticator):
+- **Setup:**
+  - refused on a registered shop tablet;
+  - refused for a wrong web address, wrong challenge, wrong ceremony type, or no Face ID/fingerprint ("user verified" flag);
+  - only the public key is stored; the challenge works once.
+- **Sign-in:**
+  - creates a personal session without the PIN;
+  - replays, tampered signed data, wrong origin, wrong relying party, approvals after 5 minutes, unknown or removed phones, deactivated people and the wrong person are all refused;
+  - failures never touch the PIN lockout;
+  - an old signature counter (a copied key) is refused;
+  - RSA keys work.
+- **Signing the report:**
+  - no PIN, and the approval is bound to the exact answers;
+  - changed answers, another person, a sign-in-only approval, a second use or more than 5 minutes: refused, nothing signed;
+  - the record says "passkey", names the phone and keeps the hash of the approved content, with the Face ID wording of the statement;
+  - PIN signing is unchanged; supervisor sign-off stays PIN only.
+- **Management:**
+  - Face ID counts as the second step;
+  - the owner, or the person's own manager for staff, removes phones, which ends that person's sessions;
+  - staff cannot remove others' phones.
+- **HTTP:**
+  - same HttpOnly SameSite=Strict session cookie;
+  - the web address comes from the request;
+  - CSRF header required;
+  - refused with the shop-tablet cookie.
+- **U13 (real browser WebAuthn):**
+  - offer after a PIN signing; set up on the phone;
+  - the portal greets the person and Face ID signs them in;
+  - "who are you" is skipped, and Sign with Face ID works without a PIN; the record shows "passkey";
+  - "Use my PIN instead" is available;
+  - More lists phones; management removes them and Face ID then falls back to the PIN;
+  - axe accessibility checks on the new screens.
+
+Not tested here: a physical iPhone/Android. The test copy is where to try that (passkeys made on the test copy only work on the test copy).
+
 ## The R1.2 brief's test list
 
 | Brief §6 item | Tests | What is checked |

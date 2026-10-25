@@ -55,6 +55,12 @@ const SIGNATURE_STATEMENT = {
   en: 'By checking this box, entering my PIN and tapping Sign & submit, I am electronically signing this weekly report. My signature means these are my own answers, to the best of my knowledge, for the reporting week shown. It does not mean I agree with any supervisor comments, and it does not waive any of my rights.',
   es: 'Al marcar esta casilla, ingresar mi PIN y tocar Firmar y enviar, estoy firmando electrónicamente este reporte semanal. Mi firma significa que estas son mis propias respuestas, según mi conocimiento, para la semana indicada. No significa que estoy de acuerdo con comentarios del supervisor y no renuncio a ninguno de mis derechos.'
 };
+// R1.3: the same statement when the person approves with Face ID / fingerprint on their own phone
+// instead of typing the PIN. Only the method words differ; the meaning of the signature is identical.
+const SIGNATURE_STATEMENT_PASSKEY = {
+  en: 'By checking this box, approving with Face ID, fingerprint or my phone\'s passcode and tapping Sign, I am electronically signing this weekly report. My signature means these are my own answers, to the best of my knowledge, for the reporting week shown. It does not mean I agree with any supervisor comments, and it does not waive any of my rights.',
+  es: 'Al marcar esta casilla, aprobar con Face ID, huella o el código de mi teléfono y tocar Firmar, estoy firmando electrónicamente este reporte semanal. Mi firma significa que estas son mis propias respuestas, según mi conocimiento, para la semana indicada. No significa que estoy de acuerdo con comentarios del supervisor y no renuncio a ninguno de mis derechos.'
+};
 
 // Optional items the R1.1 brief asks the workflow to support (comments, safety
 // issues, work obstacles). Wording is a draft for approval.
@@ -95,7 +101,7 @@ export const WR_1_0 = {
     ] },
     { id: 'notes', title: { en: 'Safety, obstacles & comments', es: 'Seguridad, obstáculos y comentarios' }, questions: SUPPLEMENTAL }
   ],
-  signature: { method: 'session + acknowledgment + PIN re-entry', statement: SIGNATURE_STATEMENT },
+  signature: { method: 'session + acknowledgment + PIN re-entry (or passkey on own phone)', statement: SIGNATURE_STATEMENT, statementPasskey: SIGNATURE_STATEMENT_PASSKEY },
   supervisorSignature: true
 };
 
@@ -120,7 +126,7 @@ export const WR_2_0_PROPOSED = {
     ] },
     { id: 'notes', title: { en: 'Comments', es: 'Comentarios' }, questions: [SUPPLEMENTAL[2]] }
   ],
-  signature: { method: 'session + acknowledgment + PIN re-entry', statement: SIGNATURE_STATEMENT },
+  signature: { method: 'session + acknowledgment + PIN re-entry (or passkey on own phone)', statement: SIGNATURE_STATEMENT, statementPasskey: SIGNATURE_STATEMENT_PASSKEY },
   supervisorSignature: true
 };
 

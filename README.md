@@ -1,6 +1,6 @@
 # TAG Employee Hub
 
-The Armored Group / Innerspace Cases employee portal: weekly performance & safety report with PIN signing, safety reports, and management review.
+The Armored Group / Innerspace Cases employee portal: weekly performance & safety report with PIN or Face ID (passkey) signing, safety reports, and management review.
 
 - **Live:** https://hub.innerspacecases.com (Cloudflare Worker `tag-employee-hub`, real data)
 - **Test copy:** https://tag-employee-hub-test.joshua-kaye.workers.dev (sample data only)

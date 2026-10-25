@@ -670,6 +670,114 @@ def t_open_portal(browser, errors):
         ctx.close()
         return 'phone (typed ID, remembered) and shop tablet (name grid) both sign with one PIN entry'
 
+def virtual_authenticator(ctx, pg):
+    """Chromium's built-in virtual authenticator: a phone with Face ID that always approves."""
+    cdp = ctx.new_cdp_session(pg)
+    cdp.send('WebAuthn.enable', {'enableUI': False})
+    a = cdp.send('WebAuthn.addVirtualAuthenticator', {'options': {'protocol': 'ctap2', 'transport': 'internal', 'hasResidentKey': True,
+                                                                   'hasUserVerification': True, 'isUserVerified': True, 'automaticPresenceSimulation': True}})
+    return cdp, a['authenticatorId']
+
+
+class LocalhostView:
+    """Passkeys need a real host name (not 127.0.0.1): same server, opened as http://localhost."""
+    def __init__(self, srv):
+        self.srv = srv; self.base = srv.base.replace('127.0.0.1', 'localhost')
+
+    def person(self, eid):
+        return self.srv.person(eid)
+
+
+@test('U13 Face ID: offered after signing with the PIN; portal greets the person and signs in with Face ID; the weekly report is signed with Face ID (no PIN); More lists phones; management removes them')
+def t_passkeys(browser, errors):
+    with Server() as srv0:
+        if EXTERNAL and '127.0.0.1' not in srv0.base and 'localhost' not in srv0.base:
+            return 'skipped: needs a local server'
+        srv = LocalhostView(srv0)
+        # --- Jordan: PIN signing on his phone, then the offer
+        ctx, pg = new_page(browser, PHONE, errors)
+        cdp, auth = virtual_authenticator(ctx, pg)
+        jordan = srv.person('E-107')
+        pg.goto(srv.base + '#/r'); pg.wait_for_selector('form[data-form=who]')
+        pg.fill('input[name=employeeId]', 'E-107'); pg.click('form[data-form=who] button[type=submit]')
+        quick_answer_all(pg)
+        expect(pg.locator('[data-act=pk-sign]')).to_have_count(0)        # nothing set up yet: PIN form
+        pg.check('form[data-form=qsign] input[name=affirm]'); pg.fill('#signpin', jordan['pin']); pg.click('button[data-submit]')
+        pg.wait_for_url('**/#/record/**', timeout=15000)
+        pg.wait_for_selector('#pk-offer')
+        axe(pg, 'face id offer'); no_hscroll(pg, 'face id offer'); shot(pg, 'u13-01-offer')
+        pg.click('[data-act=pk-offer-yes]')
+        pg.wait_for_selector('#pk-offer .success-inline')
+        hint = json.loads(pg.evaluate("localStorage.getItem('hub_pk')"))
+        assert hint['id'] == 'E-107', hint
+        creds = cdp.send('WebAuthn.getCredentials', {'authenticatorId': auth})['credentials']
+        assert len(creds) == 1 and creds[0]['isResidentCredential'], creds
+        expect(pg.locator('#countdown')).to_have_count(0)                 # setting up stopped the auto sign-out
+        signout(pg)
+        # Portal greets him; one tap signs in (no ID, no PIN)
+        pg.wait_for_selector('.pk-card'); expect(pg.locator('.pk-card')).to_contain_text(jordan['name'])
+        axe(pg, 'portal with face id'); shot(pg, 'u13-02-portal-greeting')
+        pg.click('.pk-card [data-act=pk-login]')
+        pg.wait_for_selector('.portal-public', state='detached'); pg.wait_for_selector('main h1')
+        expect(pg.locator('main h1')).to_contain_text(jordan['name'].split()[0])
+        r = pg.request.post(srv.base + 'api/call/session.me', headers={'X-Hub-Request': '1'}, data='{}')
+        me = r.json(); assert me.get('employee', {}).get('id') == 'E-107' and me['sharedDevice'] is False, (me, pg.url, pg.inner_text('main')[:300])
+        signout(pg)
+        ctx.close()
+
+        # --- Maria: sets up Face ID under More, then signs this week's report with Face ID only
+        ctx, pg = new_page(browser, PHONE, errors)
+        cdp, auth = virtual_authenticator(ctx, pg)
+        maria = srv.person('E-104')
+        login(pg, srv, 'E-104', shared=False)
+        pg.goto(srv.base + '#/more'); pg.wait_for_selector('#pk-list [data-act=pk-setup]')
+        pg.click('[data-act=pk-setup]')
+        pg.wait_for_selector('#pk-list li')
+        axe(pg, 'more face id'); shot(pg, 'u13-03-more-phones')
+        signout(pg)
+        pg.goto(srv.base + '#/r')
+        quick_answer_all(pg)                                              # "who are you" skipped: the phone knows her
+        expect(pg.locator('.signing-as')).to_contain_text(maria['name'])
+        expect(pg.locator('#signpin')).to_have_count(0)
+        axe(pg, 'sign with face id'); shot(pg, 'u13-04-sign-with-face-id')
+        pg.click('[data-act=pk-sign]')                                     # box not ticked yet: refused
+        pg.wait_for_selector('form[data-form=qsign] .alert')
+        assert '#/record/' not in pg.url
+        pg.check('form[data-form=qsign] input[name=affirm]')
+        pg.click('[data-act=pk-sign]')
+        pg.wait_for_url('**/#/record/**', timeout=15000)
+        pg.wait_for_selector('.sig-block')
+        expect(pg.locator('.sig-block')).to_contain_text('passkey')
+        expect(pg.locator('.sig-block')).to_contain_text(maria['name'])
+        expect(pg.locator('#pk-offer')).to_have_count(0)                  # already set up: no offer
+        shot(pg, 'u13-05-signed-with-face-id')
+        # "Use my PIN instead" is always there
+        ctx2, pg2 = new_page(browser, PHONE, errors)
+        cdp2, auth2 = virtual_authenticator(ctx2, pg2)
+        pg2.goto(srv.base); pg2.evaluate("localStorage.setItem('hub_pk', JSON.stringify({id:'E-106', name:'Kim Testwell'}))")
+        pg2.goto(srv.base + '#/r'); pg2.reload()
+        quick_answer_all(pg2)
+        pg2.click('[data-act=pk-usepin]'); pg2.wait_for_selector('#signpin')
+        ctx2.close()
+
+        # --- Management sees the phone and removes it (lost phone)
+        ctx3, pg3 = new_page(browser, TABLET, errors)
+        login(pg3, srv, 'E-101', shared=False)
+        pg3.goto(srv.base + '#/accounts'); pg3.wait_for_selector('#acct-E-104')
+        expect(pg3.locator('#acct-E-104')).to_contain_text('Face ID on 1 phone')
+        pg3.click('#acct-E-104 form[data-form=pkremoveall] button')
+        expect(pg3.locator('#acct-E-104 .acct-out')).to_contain_text('Removed 1 phone')
+        ctx3.close()
+        # Maria's phone: Face ID no longer works; she is told to use the PIN
+        pg.goto(srv.base + '#/home'); pg.reload(); pg.wait_for_selector('.pk-card')
+        pg.click('.pk-card [data-act=pk-login]')
+        pg.wait_for_selector('.portal-public .alert')
+        expect(pg.locator('.portal-public .alert')).to_contain_text('PIN')
+        assert pg.evaluate("localStorage.getItem('hub_pk')") is None
+        ctx.close()
+        return 'offer after PIN signing, portal Face ID sign-in, report signed with Face ID (record says passkey), PIN fallback, removal by management'
+
+
 if __name__ == '__main__':
     with sync_playwright() as p:
         browser = p.chromium.launch()

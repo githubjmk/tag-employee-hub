@@ -48,7 +48,8 @@ export function createServer(hubRef, { secureCookies = false, devReset = false }
     if (url.pathname.startsWith('/api/')) {
       const chunks = []; let size = 0;
       for await (const ch of req) { size += ch.length; if (size > 2_300_000) { res.writeHead(413); return res.end(); } chunks.push(ch); }
-      const request = new Request('http://localhost' + req.url, { method: req.method, headers: req.headers, body: ['GET', 'HEAD'].includes(req.method) ? undefined : Buffer.concat(chunks) });
+      const host = /^[A-Za-z0-9.-]+(:\d{1,5})?$/.test(req.headers.host || '') ? req.headers.host : 'localhost';
+      const request = new Request('http://' + host + req.url, { method: req.method, headers: req.headers, body: ['GET', 'HEAD'].includes(req.method) ? undefined : Buffer.concat(chunks) });
       const response = await handler(request, { clientKey: req.socket.remoteAddress || 'x' });
       const headers = {};
       response.headers.forEach((v, k) => { if (k !== 'set-cookie') headers[k] = v; });

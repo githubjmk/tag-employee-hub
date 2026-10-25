@@ -9,7 +9,7 @@ export const SEC_HEADERS = {
   'Content-Security-Policy': "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
-  'Permissions-Policy': 'camera=(self), microphone=(), geolocation=()',
+  'Permissions-Policy': 'camera=(self), microphone=(), geolocation=(), publickey-credentials-create=(self), publickey-credentials-get=(self)',
   'X-Frame-Options': 'DENY',
   'Cross-Origin-Opener-Policy': 'same-origin'
 };
@@ -75,6 +75,7 @@ export function createHttpHandler({ service, secureCookies = false, demo = null,
   return async function handle(req, { clientKey = 'local' } = {}) {
     const url = new URL(req.url);
     const c = cookies(req);
+    const rp = { rpId: url.hostname, origin: url.origin };   // passkeys belong to the address the page was opened at
     try {
       const p = url.pathname;
       // Gateway delivery receipts come from GoTo's servers, so they carry a URL secret instead of the CSRF header.
@@ -113,6 +114,18 @@ export function createHttpHandler({ service, secureCookies = false, demo = null,
         const r = await service.login({ employeeId: b.employeeId, pin: b.pin, setupCode: b.setupCode, totp: b.totp, sharedDevice: !!b.sharedDevice, deviceToken: tokenFrom(c, 'hub_device') });
         return json(200, { ok: true, sharedDevice: r.sharedDevice, idleMinutes: r.idleMinutes, mustSetPin: r.mustSetPin }, { 'Set-Cookie': cookie('hub_session', r.token, 12 * 3600) });
       }
+      // Passkeys (Face ID / fingerprint) on a person's own phone. Bound to this web address.
+      if (p === '/api/passkey/options' && req.method === 'POST') {
+        if (rateLimited('pk:' + clientKey, 30, 60000)) throw new HubError(429, 'rate', 'Too many attempts. Wait a minute.');
+        const b = await body(req, MAX_BODY);
+        return json(200, await service.passkeyOptions({ rp, purpose: b.purpose, action: b.action, content: b.content }));
+      }
+      if (p === '/api/passkey/login' && req.method === 'POST') {
+        if (rateLimited('pk:' + clientKey, 30, 60000)) throw new HubError(429, 'rate', 'Too many attempts. Wait a minute.');
+        const b = await body(req, MAX_BODY);
+        const r = await service.passkeyLogin({ challengeId: b.challengeId, credential: b.credential, expectEmployeeId: b.expectEmployeeId, deviceToken: tokenFrom(c, 'hub_device') });
+        return json(200, { ok: true, employee: r.employee, idleMinutes: r.idleMinutes, signTicket: r.signTicket, sharedDevice: false }, { 'Set-Cookie': cookie('hub_session', r.token, 12 * 3600) });
+      }
       if (p === '/api/logout' && req.method === 'POST') {
         await service.logout(tokenFrom(c, 'hub_session'));
         return json(200, { ok: true }, { 'Set-Cookie': cookie('hub_session', '', 0) });
@@ -121,7 +134,7 @@ export function createHttpHandler({ service, secureCookies = false, demo = null,
       if (m && req.method === 'POST') {
         const action = m[1];
         const b = await body(req, action === 'attachment.add' ? MAX_UPLOAD_BODY : MAX_BODY);
-        const result = await service.call(tokenFrom(c, 'hub_session'), action, b);
+        const result = await service.call(tokenFrom(c, 'hub_session'), action, b, { rp });
         if (action === 'device.register') {
           // The device token never reaches page script: it becomes an HttpOnly cookie on this browser.
           const { deviceToken, ...rest } = result;
@@ -156,7 +169,7 @@ export function createHttpHandler({ service, secureCookies = false, demo = null,
     } catch (e) {
       const status = e instanceof HubError ? e.status : 500;
       if (status === 500) console.error('[hub] internal error:', e && e.message);   // never logs request bodies
-      const extra = status === 401 && !['/api/login'].includes(url.pathname) ? { 'Set-Cookie': cookie('hub_session', '', 0) } : {};
+      const extra = status === 401 && !['/api/login', '/api/passkey/login', '/api/passkey/options'].includes(url.pathname) ? { 'Set-Cookie': cookie('hub_session', '', 0) } : {};
       return json(status, { error: e instanceof HubError ? e.code : 'internal', message: e instanceof HubError ? e.message : 'Something went wrong' }, extra);
     }
   };
