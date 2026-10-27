@@ -76,6 +76,28 @@ CREATE TABLE IF NOT EXISTS qbt_links (
   linked_by TEXT NOT NULL,
   linked_at TEXT NOT NULL
 );
+-- Email per account (optional), R1.3: onboarding invites and signing in with email instead of the ID.
+CREATE TABLE IF NOT EXISTS employee_contacts (
+  employee_id TEXT PRIMARY KEY REFERENCES employees(id),
+  email TEXT UNIQUE,
+  updated_at TEXT NOT NULL
+);
+-- Onboarding invites: a single-use link (72 hours) that lets the person choose their PIN.
+CREATE TABLE IF NOT EXISTS invites (
+  id TEXT PRIMARY KEY,
+  employee_id TEXT NOT NULL REFERENCES employees(id),
+  token_hash TEXT NOT NULL UNIQUE,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  sent_to TEXT,
+  sent_at TEXT,
+  send_detail TEXT,
+  opened_at TEXT,
+  used_at TEXT,
+  revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS invites_employee ON invites (employee_id);
 -- One-time challenges for passkey ceremonies (5 minutes). A verified "sign" challenge becomes a
 -- single-use signing ticket bound to the exact answers that were shown.
 CREATE TABLE IF NOT EXISTS webauthn_challenges (

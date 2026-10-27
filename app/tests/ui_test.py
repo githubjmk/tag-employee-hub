@@ -902,6 +902,55 @@ def t_guide(browser, errors):
         return 'card -> 3 steps with moving pictures -> Face ID set up inside the guide -> all set; card gone afterwards'
 
 
+
+@test('U17 onboarding email: manager adds a person with an email -> email preview (test copy sends nothing) -> link on a phone -> choose PIN -> guided setup; setup list updates')
+def t_invite(browser, errors):
+    with Server() as srv:
+        ctx, pg = new_page(browser, TABLET, errors)
+        login(pg, srv, 'E-101', shared=False)
+        pg.goto(srv.base + '#/accounts'); pg.wait_for_selector('main h1')
+        pg.click('#new-account summary')
+        f = 'form[data-form=acreate] '
+        pg.fill(f + 'input[name=name]', 'Uma Newstart')
+        pg.fill(f + 'input[name=email]', 'uma.newstart@example.com')
+        pg.select_option(f + 'select[name=reportsTo]', 'E-102')
+        assert pg.locator(f + 'input[name=sendInvite]').is_checked()
+        pg.click(f + 'button[type=submit]')
+        pg.wait_for_selector('.acct-out .invite-box')
+        expect(pg.locator('.acct-out .invite-box')).to_contain_text('no email was sent')
+        frame = pg.frame_locator('.email-preview iframe')
+        expect(frame.locator('a', has_text='Set up my account')).to_be_visible()
+        pad = frame.locator('td[style*="padding:24px"]').first.evaluate("e => getComputedStyle(e).paddingTop")
+        assert pad == '24px', 'the email\'s own styles apply in the preview: ' + pad
+        link = pg.inner_text('.acct-out .invite-box .code').strip()
+        assert re.search(r'/#/join/[a-f0-9]{64}$', link), link
+        expect(pg.locator('.acct-out > details > summary')).to_contain_text('Backup: temporary PIN')
+        axe(pg, 'invite result'); shot(pg, 'u17-01-invite-preview')
+        new_id = pg.locator('.acct-out:has(.invite-box)').locator('xpath=ancestor::article').get_attribute('id').replace('acct-', '')
+        phone, ph = new_page(browser, PHONE, errors)
+        ph.goto(link)
+        ph.wait_for_selector('form[data-form=join]')
+        expect(ph.locator('h1')).to_contain_text('Uma')
+        axe(ph, 'join page'); no_hscroll(ph, 'join page'); shot(ph, 'u17-02-join')
+        ph.fill('input[name=newPin]', '58302719'); ph.fill('input[name=confirmPin]', '58302710')
+        ph.click('form[data-form=join] button[type=submit]')
+        ph.wait_for_selector('.join-card .alert')
+        ph.fill('input[name=newPin]', '58302719'); ph.fill('input[name=confirmPin]', '58302719')
+        ph.click('form[data-form=join] button[type=submit]')
+        ph.wait_for_selector('.guide')
+        assert '#/getstarted' in ph.url
+        shot(ph, 'u17-03-guide')
+        ph.goto(link); ph.wait_for_selector('.join-card h1')
+        expect(ph.locator('form[data-form=join]')).to_have_count(0)
+        phone.close()
+        pg.goto(srv.base + '#/home'); pg.goto(srv.base + '#/accounts'); pg.wait_for_selector('#acct-' + new_id)
+        row = pg.locator('#acct-' + new_id + ' .setup-row')
+        expect(row).to_contain_text('invite used')
+        expect(row.locator('.setup-step.ok')).to_have_count(2)   # Invited, PIN
+        ctx.close()
+        return {'newEmployeeId': new_id, 'flow': 'add with email -> preview -> link -> PIN -> guided setup; link works once'}
+
+
 if __name__ == '__main__':
     with sync_playwright() as p:
         browser = p.chromium.launch()

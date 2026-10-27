@@ -29,6 +29,8 @@ export const api = {
   login: (payload) => local() ? local().login(payload) : request('POST', '/api/login', payload),
   passkeyOptions: (payload) => request('POST', '/api/passkey/options', payload),
   passkeyLogin: (payload) => request('POST', '/api/passkey/login', payload),
+  invitePeek: (token) => request('GET', '/api/invite/' + encodeURIComponent(token)),
+  inviteAccept: (payload) => request('POST', '/api/invite/accept', payload),
   logout: () => local() ? local().logout() : request('POST', '/api/logout', {}),
   call: (action, input) => local() ? local().call(action, input || {}) : request('POST', '/api/call/' + action, input || {}),
   async download(submissionId, format) {

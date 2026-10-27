@@ -6,7 +6,7 @@ import { renderRecordHtml } from './render.js';
 import { parseGoToReceipt } from './goto-sms.js';
 
 export const SEC_HEADERS = {
-  'Content-Security-Policy': "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  'Content-Security-Policy': "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src 'self' https://challenges.cloudflare.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
   'Permissions-Policy': 'camera=(self), microphone=(), geolocation=(), publickey-credentials-create=(self), publickey-credentials-get=(self)',
@@ -132,6 +132,18 @@ export function createHttpHandler({ service, secureCookies = false, demo = null,
         const r = await service.passkeyLogin({ challengeId: b.challengeId, credential: b.credential, expectEmployeeId: b.expectEmployeeId, deviceToken: tokenFrom(c, 'hub_device'), currentToken: tokenFrom(c, 'hub_session') });
         return json(200, { ok: true, employee: r.employee, idleMinutes: r.idleMinutes, signTicket: r.signTicket, sharedDevice: false }, { 'Set-Cookie': cookie('hub_session', r.token, 12 * 3600) });
       }
+      // Onboarding invite (welcome email or QR code): who it is for, then choose the PIN.
+      const inv = /^\/api\/invite\/([a-f0-9]{64})$/.exec(p);
+      if (inv && req.method === 'GET') {
+        if (rateLimited('invite:' + clientKey, 30, 60000)) throw new HubError(429, 'rate', 'Too many attempts. Wait a minute.');
+        return json(200, service.invitePeek(inv[1]));
+      }
+      if (p === '/api/invite/accept' && req.method === 'POST') {
+        if (rateLimited('invite:' + clientKey, 30, 60000)) throw new HubError(429, 'rate', 'Too many attempts. Wait a minute.');
+        const b = await body(req, MAX_BODY);
+        const r = await service.inviteAccept({ token: String(b.token || ''), newPin: b.newPin, confirmPin: b.confirmPin, deviceToken: tokenFrom(c, 'hub_device') });
+        return json(200, { ok: true, employee: r.employee, idleMinutes: r.idleMinutes, mfa: r.mfa }, { 'Set-Cookie': cookie('hub_session', r.token, 12 * 3600) });
+      }
       if (p === '/api/logout' && req.method === 'POST') {
         await service.logout(tokenFrom(c, 'hub_session'));
         return json(200, { ok: true }, { 'Set-Cookie': cookie('hub_session', '', 0) });
@@ -154,6 +166,13 @@ export function createHttpHandler({ service, secureCookies = false, demo = null,
         const h = new Headers({ ...SEC_HEADERS, 'Cache-Control': 'no-store', 'Content-Disposition': `attachment; filename="weekly-report-${rec[1]}.${rec[2]}"`,
           'Content-Type': rec[2] === 'json' ? 'application/json; charset=utf-8' : 'text/html; charset=utf-8' });
         return new Response(rec[2] === 'json' ? JSON.stringify(r, null, 2) : renderRecordHtml(r), { status: 200, headers: h });
+      }
+      // Test copy: the welcome email as it would arrive (own sandboxed page so its inline styles work).
+      const ipv = /^\/api\/invite-preview\/(INV-[A-F0-9]{10})$/.exec(p);
+      if (ipv && req.method === 'GET') {
+        const r = await service.call(tokenFrom(c, 'hub_session'), 'invite.preview', { inviteId: ipv[1] });
+        return new Response(r.html, { status: 200, headers: { ...SEC_HEADERS, 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'private, no-store', 'X-Frame-Options': 'SAMEORIGIN',
+          'Content-Security-Policy': "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; frame-ancestors 'self'; sandbox" } });
       }
       const att = /^\/api\/attachment\/(ATT-[A-F0-9]{10})$/.exec(p);
       if (att && req.method === 'GET') {

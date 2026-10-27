@@ -14,6 +14,7 @@ import { createHttpHandler, makeTurnstile, SEC_HEADERS } from '../core/http.js';
 import { SCHEMA, UPGRADES } from '../core/schema.js';
 import { makeGoToSms } from '../core/goto-sms.js';
 import { makeQbTime } from '../core/qbtime.js';
+import { makeResendMailer } from '../core/mailer.js';
 import { doDb, persistentClock } from './do-adapters.js';
 
 const TICK_MS = 60_000;
@@ -56,6 +57,8 @@ export class Hub extends DurableObject {
       }
     } } : { fetch: (...a) => fetch(...a) };
     // QuickBooks Time (read-only) only on the live Hub: the test copy always uses invented sample hours.
+    // Welcome emails only from the live Hub (Resend, innerspacecases.com). The test copy keeps previews.
+    if (!demo) platform.mailer = makeResendMailer({ fetch: (...a) => fetch(...a), apiKey: env.RESEND_API_KEY, from: env.HUB_MAIL_FROM || undefined, replyTo: env.HUB_MAIL_REPLY_TO || null });
     if (!demo && env.QBT_TOKEN) platform.qbtime = makeQbTime({ fetch: (...a) => fetch(...a), token: env.QBT_TOKEN });
     const service = createService({ db, crypto, clock, senders, platform, config: { demo, pilotStartWeek: demo ? PILOT_START_WEEK : (env.HUB_PILOT_START_WEEK || null) } });
     const seeded = (() => { try { return !!db.get("SELECT v FROM meta WHERE k='seeded'"); } catch { return false; } })();

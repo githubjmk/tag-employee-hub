@@ -348,6 +348,35 @@ function setPinView(msg) {
   root.querySelector('h1').setAttribute('tabindex', '-1'); root.querySelector(msg ? '.alert' : 'h1').focus();
 }
 
+// ---------------------------------------------------------------- welcome page from an invite (email or QR)
+async function joinView(token, msg) {
+  document.body.classList.add('plain');
+  let p; try { p = await api.invitePeek(token); } catch (e) { p = { valid: false }; }
+  if (p.language && !S.joinLangSet) { S.lang = p.language === 'es' ? 'es' : 'en'; document.documentElement.lang = S.lang; S.joinLangSet = true; }
+  const card = (inner) => { root.innerHTML = String(html`<main id="main" class="login" tabindex="-1"><div class="login-card join-card">
+    <div class="login-brand logo-top"><img class="login-logo" src="${IS_LOGO_NAVY}" alt="Innerspace Cases" width="337" height="124"></div>${inner}
+    <button class="lang standalone" data-act="lang-join" data-token="${token}">${S.lang === 'en' ? 'Español' : 'English'}</button></div>${copyright()}</main>`); root.querySelector(msg ? '.alert' : 'h1').focus(); };
+  if (!p.valid) return card(html`<h1 tabindex="-1">${t('join_bad')}</h1><p>${t('join_bad_body')}</p><a class="btn wide" href="#/home">${t('portal_back')}</a>`);
+  card(html`<h1 tabindex="-1">${t('join_hi').replace('{n}', p.firstName)}</h1><p>${t('join_intro')}</p>
+    ${msg ? html`<p class="alert" role="alert">${msg}</p>` : ''}
+    <form data-form="join" data-token="${token}" novalidate>
+      <p class="meta">${t('signin_id')}: <strong>${p.employeeId}</strong></p>
+      <label class="field"><span>${t('join_pin')}</span><input name="newPin" type="password" inputmode="numeric" maxlength="12" autocomplete="new-password" required></label>
+      <label class="field"><span>${t('join_pin2')}</span><input name="confirmPin" type="password" inputmode="numeric" maxlength="12" autocomplete="new-password" required></label>
+      <button class="btn primary wide" type="submit">${t('join_btn')}</button></form>`);
+}
+function joinMfaView(mfa) {
+  const src = qrSrc(mfa.otpauth);
+  root.innerHTML = String(html`<main id="main" class="login" tabindex="-1"><div class="login-card join-card">
+    <div class="login-brand logo-top"><img class="login-logo" src="${IS_LOGO_NAVY}" alt="Innerspace Cases" width="337" height="124"></div>
+    <h1 tabindex="-1">${t('join_mfa_t')}</h1><p>${t('join_mfa_body')}</p>${onceWarning()}
+    <a class="btn primary wide" href="${mfa.otpauth}">${t('join_mfa_open')}</a>
+    <p class="fine">${t('join_mfa_manual')}</p><p class="code-row"><span class="code small">${mfa.secret}</span>${copyBtn(mfa.secret)}</p>
+    ${src ? html`<details><summary>QR</summary><img class="qr" src="${src}" alt="QR code for the authenticator app" width="220" height="220"></details>` : ''}
+    <button class="btn wide" data-act="join-continue">${t('join_continue')}</button></div>${copyright()}</main>`);
+  root.querySelector('h1').focus();
+}
+
 // ---------------------------------------------------------------- open portal (no sign-in needed)
 // Owner decision 2026-10-15: the portal opens without a PIN. The weekly report asks for the
 // PIN once, when signing. Past reports, safety reports and management screens need the PIN.
@@ -1101,6 +1130,7 @@ function accountForm(a, managers) {
     <div class="grid2">
       ${isNew ? html`<label class="field"><span>Employee ID (optional)</span><input name="employeeId" maxlength="20" autocapitalize="characters" spellcheck="false" placeholder="Leave blank to assign the next number"></label>` : ''}
       <label class="field"><span>Name</span><input name="name" maxlength="80" required value="${v.name || ''}" autocomplete="off"></label>
+      <label class="field"><span>Email (optional: welcome email, and signing in with email)</span><input name="email" type="email" inputmode="email" maxlength="200" autocomplete="off" value="${v.email || ''}" placeholder="name@example.com"></label>
       ${isNew ? html`<label class="field"><span>Start date</span><input type="date" name="startDate" required value="${mondayOf(S.me.now)}"><small class="hint">For someone already working here, leave this week's Monday (or use their hire date) so this week's report is expected. A new hire's first partial week is skipped.</small></label>` : ''}
       <label class="field"><span>Language</span><select name="language"><option value="en" ${v.language === 'en' ? raw('selected') : ''}>English</option><option value="es" ${v.language === 'es' ? raw('selected') : ''}>Español</option></select></label>
       <label class="field"><span>Reports to</span><select name="reportsTo"><option value="">—</option>${managers.filter(m => !a || m.id !== a.id).map(m => html`<option value="${m.id}" ${v.reportsTo === m.id ? raw('selected') : ''}>${m.name}</option>`)}</select></label>
@@ -1112,7 +1142,26 @@ function accountForm(a, managers) {
     <label class="check"><input type="checkbox" name="fullAccess" ${v.fullAccess ? raw('checked') : ''}><span><strong>Full access</strong> (Management only): every employee's surveys and employee accounts</span></label>
     <label class="check"><input type="checkbox" name="safetyContact" ${v.safetyContact ? raw('checked') : ''}><span><strong>Safety contact</strong> (Management only): gets urgent safety alerts and escalations</span></label>
     <label class="field"><span>Mobile number for urgent safety texts (Management only, optional)</span><input name="smsPhone" inputmode="tel" autocomplete="off" value="${v.smsPhone && v.smsPhone !== 'on file' ? v.smsPhone : ''}" placeholder="818-555-0142"></label>
+    ${isNew ? html`<label class="check"><input type="checkbox" name="sendInvite" checked><span><strong>Send the welcome email now</strong> (if an email is filled in). It has a one-time link to choose a PIN and set up the phone.</span></label>` : ''}
     <button class="btn primary" type="submit">${isNew ? 'Create account' : 'Save changes'}</button></form>`;
+}
+// Setup list: where each person is in onboarding.
+function setupStatus(a) {
+  const o = a.onboarding, inv = o.invite;
+  const inviteText = !inv ? (a.email ? 'no invite yet' : 'no email on file') : inv.used ? 'invite used' : inv.revoked ? 'invite replaced' : inv.expired ? 'invite expired' : inv.sentAt ? `emailed ${fmtDT(inv.sentAt)}${inv.opened ? ' · opened' : ''}` : (inv.detail && !inv.sentAt ? 'email failed' : `link made ${fmtDT(inv.createdAt)}${inv.opened ? ' · opened' : ''}`);
+  const step = (ok, label) => html`<span class="setup-step ${ok ? 'ok' : ''}">${ok ? '✓' : '○'} ${label}</span>`;
+  return html`<p class="setup-row">${step(!!inv && (inv.sentAt || inv.used), 'Invited')} ${step(o.pinSet, 'PIN')} ${step(o.faceId, 'Face ID')} ${step(o.reminders, 'Reminders')} ${step(o.firstReport, 'First report')} <span class="meta">· ${inviteText}</span></p>`;
+}
+// Result of an invite: the link (and QR code) to show in person; the email preview in the test copy.
+function inviteBox(r) {
+  const src = qrSrc(r.link);
+  return html`<div class="code-box invite-box" role="status">
+    ${r.sent ? html`<p class="success-inline">${icon('check')} ${r.sent.live ? `Welcome email sent to ${r.sent.to}.` : `Test copy: no email was sent. This is what ${r.sent.to} would get:`}</p>` : ''}
+    ${r.sent && r.sent.preview ? html`<details class="email-preview" open><summary>Email preview: ${r.sent.preview.subject}</summary><iframe title="Email preview" src="/api/invite-preview/${r.sent.preview.inviteId}"></iframe></details>` : ''}
+    <p><strong>${r.sent ? 'Or show this in person:' : 'Show this to ' + r.employee.name + ':'}</strong> they point their phone camera at the code. It works once, until ${fmtDT(r.expiresAt)}.</p>
+    ${src ? html`<img class="qr" src="${src}" alt="Invite QR code for ${r.employee.name}" width="220" height="220">` : ''}
+    <p class="code-row"><span class="code small">${r.link}</span>${copyBtn(r.link)}</p>
+    <p class="fine">Treat the link like a temporary PIN: anyone who opens it first can set the PIN. A new invite cancels the old one.</p></div>`;
 }
 async function accountsView() {
   if (!(can('accounts.manage') || can('accounts.pinReset.team'))) return go('#/home');
@@ -1126,6 +1175,10 @@ async function accountsView() {
       <p class="meta"><span class="chip ${a.role === 'management' ? 'c-open' : ''}">${ROLE_LABEL(a)}</span>${a.fullAccess ? html` <span class="chip">Full access</span>` : ''}${a.safetyContact ? html` <span class="chip c-warn">Safety contact</span>` : ''}
         ${a.status !== 'active' ? html` <span class="chip c-missing">Deactivated ${a.endDate || ''}</span>` : ''}
         · reports to ${a.reportsToName || '—'} · ${a.pinSet ? 'PIN set' : a.tempPinPending ? 'temporary PIN not used yet' : 'no PIN'}${a.locked ? html` · <span class="bad">locked</span>` : ''}${a.role === 'management' ? (a.mfaEnrolled ? ' · authenticator set up' : html` · <span class="bad">no authenticator</span>`) : ''}${a.safetyContact ? (a.smsPhone ? ' · texts on' : html` · <span class="warn">no mobile number for urgent texts</span>`) : ''}${a.passkeys ? html` · Face ID on ${a.passkeys} phone${a.passkeys > 1 ? 's' : ''}` : ''}</p></div></div>
+    ${a.status === 'active' && a.onboarding ? setupStatus(a) : ''}
+    ${a.id !== S.me.employee.id && a.status === 'active' && (admin || (a.role === 'staff' && a.reportsTo === S.me.employee.id)) ? html`<div class="row-actions">
+      ${a.email ? html`<button class="btn" data-act="invite-email" data-id="${a.id}">${icon('bell')} ${a.onboarding && a.onboarding.invite ? 'Send a new welcome email' : 'Send welcome email'}</button>` : ''}
+      <button class="btn-quiet" data-act="invite-qr" data-id="${a.id}">Show invite QR code</button></div>` : ''}
     ${a.id !== S.me.employee.id && a.status === 'active' ? html`<div class="row-actions">
       ${admin || (a.role === 'staff' && a.reportsTo === S.me.employee.id) ? html`<form data-form="setupcode" data-id="${a.id}"><button class="btn" type="submit">Reset PIN</button></form>` : ''}
       ${admin && a.role === 'management' ? html`<form data-form="enrolltotp" data-id="${a.id}"><button class="btn-quiet" type="submit">Reset authenticator</button></form>` : ''}
@@ -1462,6 +1515,7 @@ async function route() {
   const parts = pathPart.split('/').filter(Boolean);
   const params = new URLSearchParams(query);
   await loadConfig();
+  if (parts[0] === 'join' && parts[1]) return joinView(parts[1]);
   if (!S.me) {
     // Signed out: the portal and the weekly report are open; everything else asks for ID + PIN.
     let me = null;
@@ -1533,6 +1587,15 @@ root.addEventListener('click', async (ev) => {
     return;
   }
   if (act === 'restart-setup') return setupView(null, null, true);
+  if (act === 'invite-email' || act === 'invite-qr') {
+    el.disabled = true;
+    const out = el.closest('article')?.querySelector('.acct-out');
+    try { const r = await call('invite.create', { employeeId: el.dataset.id, send: act === 'invite-email' }); if (out) { out.innerHTML = String(inviteBox(r)); } announce(r.sent ? 'Welcome email sent' : 'Invite ready'); }
+    catch (e) { if (!quiet(e) && out) { out.innerHTML = String(html`<p class="alert" role="alert">${errMsg(e)}</p>`); } }
+    el.disabled = false; return;
+  }
+  if (act === 'lang-join') { S.lang = S.lang === 'en' ? 'es' : 'en'; document.documentElement.lang = S.lang; return joinView(el.dataset.token); }
+  if (act === 'join-continue') { await loadMe(); document.body.classList.remove('plain'); return route(); }
   if (act === 'pk-login') {
     el.disabled = true;
     const h = pkHint();
@@ -1706,6 +1769,15 @@ root.addEventListener('submit', async (ev) => {
     try { await api.call('auth.setPin', { newPin: f.newPin.value, confirmPin: f.confirmPin.value }); await loadMe(); return afterSignIn(); }
     catch (e) { return setPinView(errMsg(e)); }
   }
+  if (kind === 'join') {
+    btn.disabled = true;
+    try {
+      const r = await api.inviteAccept({ token: form.dataset.token, newPin: f.newPin.value, confirmPin: f.confirmPin.value });
+      S.me = null; history.replaceState(null, '', '#/getstarted');
+      if (r.mfa) return joinMfaView(r.mfa);
+      await loadMe(); document.body.classList.remove('plain'); return route();
+    } catch (e) { return joinView(form.dataset.token, errMsg(e)); }
+  }
   if (kind === 'pkunlock') {
     clearInterval(S.autoOut); document.getElementById('countdown')?.remove();
     btn.disabled = true;
@@ -1790,13 +1862,20 @@ root.addEventListener('submit', async (ev) => {
     }
     if (kind === 'enrolltotp') { const r = await call('auth.enrollTotp', { employeeId: form.dataset.id }); const out = form.closest('article')?.querySelector('.acct-out'); if (out) out.innerHTML = String(secretBox({ mfa: r })); btn.disabled = false; return; }
     if (kind === 'acreate' || kind === 'aupdate') {
-      const input = { name: f.name.value, language: f.language.value, reportsTo: f.reportsTo.value || null, role: form.querySelector('input[name=role]:checked')?.value, fullAccess: f.fullAccess.checked, safetyContact: f.safetyContact.checked, smsPhone: f.smsPhone.value };
+      const input = { name: f.name.value, language: f.language.value, reportsTo: f.reportsTo.value || null, role: form.querySelector('input[name=role]:checked')?.value, fullAccess: f.fullAccess.checked, safetyContact: f.safetyContact.checked, smsPhone: f.smsPhone.value, email: f.email.value };
       if (kind === 'acreate') {
         const r = await call('accounts.create', { ...input, employeeId: f.employeeId.value.trim() || undefined, startDate: f.startDate.value });
+        let inv = null, invErr = null;
+        if (f.sendInvite.checked && f.email.value.trim()) { try { inv = await call('invite.create', { employeeId: r.account.id, send: true }); } catch (e) { if (quiet(e)) return; invErr = errMsg(e); } }
         EMP = null; await accountsView();
         const box = document.getElementById('acct-' + r.account.id)?.querySelector('.acct-out');
-        if (box) { box.innerHTML = String(secretBox(r)); box.closest('article').scrollIntoView({ block: 'center' }); }
-        announce('Account created'); return;
+        if (box) {
+          // With a welcome email the person sets everything up themselves; the temporary PIN stays as a backup.
+          box.innerHTML = String(inv ? html`${inviteBox(inv)}<details><summary>Backup: temporary PIN${r.mfa ? ' and authenticator' : ''} (only if the email does not arrive)</summary>${secretBox(r)}</details>`
+            : html`${invErr ? html`<p class="alert" role="alert">${invErr}</p>` : ''}${secretBox(r)}`);
+          box.closest('article').scrollIntoView({ block: 'center' });
+        }
+        announce(inv ? 'Account created and welcome email sent' : 'Account created'); return;
       }
       const r = await call('accounts.update', { ...input, employeeId: form.dataset.id });
       EMP = null; await accountsView();

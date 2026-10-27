@@ -20,6 +20,7 @@ import { internalRolesFor, describeRoles, permissionsOf } from './permissions.js
 import { verifyRegistration, verifyAssertion, b64urlEncode, WebAuthnError, ALG } from './webauthn.js';
 import { pushEndpointOk, generateVapidKeys, sendPush } from './webpush.js';
 import { makeDemoQbTime, QbtError } from './qbtime.js';
+import { makePreviewMailer, inviteEmail } from './mailer.js';
 
 export class HubError extends Error {
   constructor(status, code, message) { super(message || code); this.status = status; this.code = code; }
@@ -462,7 +463,10 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   async function login({ employeeId, pin, setupCode, totp, deviceToken, sharedDevice }) {
     return serial(async () => {
       const generic = new HubError(401, 'bad_login', 'Employee number or PIN is not right.');
-      const e = emp(String(employeeId || '').trim().toUpperCase());
+      // The ID box also accepts the person's email, when one is on file.
+      const typed = String(employeeId || '').trim();
+      const byEmail = typed.includes('@') ? db.get('SELECT employee_id FROM employee_contacts WHERE email=?', [typed.toLowerCase()]) : null;
+      const e = emp(byEmail ? byEmail.employee_id : typed.toUpperCase());
       if (!e) { tx(() => audit(null, 'login.failed', 'employee', String(employeeId || '').slice(0, 20), { reason: 'unknown' })); throw generic; }
       if (e.status === 'terminated') { tx(() => audit(e.id, 'login.blocked', 'employee', e.id, { reason: 'separated' })); throw generic; }
       if (e.hard_locked) throw new HubError(423, 'hard_locked', HARD_LOCK_MSG);
@@ -829,6 +833,8 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     ...describeRoles(rolesOf(e)), pinSet: !!e.pin_hash, tempPinPending: !!e.setup_code_hash && e.setup_code_expires > nowIso(),
     locked: !!e.hard_locked || !!(e.locked_until && e.locked_until > nowIso()), mfaEnrolled: !!e.totp_secret,
     passkeys: db.get('SELECT COUNT(*) n FROM passkeys WHERE employee_id=? AND removed_at IS NULL', [e.id]).n,
+    email: (has(ctx, 'hr') || e.id === ctx.me.id || e.supervisor_id === ctx.me.id) ? emailOf(e.id) : null,
+    onboarding: onboardingOf(e),
     smsPhone: has(ctx, 'hr') || e.id === ctx.me.id ? e.sms_phone : (e.sms_phone ? 'on file' : null)
   });
   const canSeeAccount = (ctx, e) => has(ctx, 'hr') || e.supervisor_id === ctx.me.id || e.id === ctx.me.id;
@@ -836,6 +842,27 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     if (!any(ctx, 'supervisor', 'hr')) throw deny();
     return db.all('SELECT * FROM employees ORDER BY status, display_name', []).filter(e => canSeeAccount(ctx, e)).map(e => accountView(ctx, e));
   };
+  const emailOf = (eid) => { const r = db.get('SELECT email FROM employee_contacts WHERE employee_id=?', [eid]); return r ? r.email : null; };
+  // Where the person is in onboarding (Accounts → setup list).
+  function onboardingOf(e) {
+    const inv = db.get('SELECT * FROM invites WHERE employee_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1', [e.id]);
+    return {
+      invite: inv ? { sentTo: inv.sent_to, sentAt: inv.sent_at, opened: !!inv.opened_at, used: !!inv.used_at, expired: !inv.used_at && inv.expires_at < nowIso(), revoked: !!inv.revoked_at, createdAt: inv.created_at, detail: inv.send_detail } : null,
+      pinSet: !!e.pin_hash,
+      faceId: db.get('SELECT COUNT(*) n FROM passkeys WHERE employee_id=? AND removed_at IS NULL', [e.id]).n > 0,
+      reminders: db.get('SELECT COUNT(*) n FROM push_subscriptions WHERE employee_id=? AND removed_at IS NULL', [e.id]).n > 0,
+      firstReport: !!db.get('SELECT 1 FROM survey_submissions WHERE employee_id=? LIMIT 1', [e.id])
+    };
+  }
+  function setEmail(eid, raw) {
+    if (raw === undefined) return;
+    const email = String(raw || '').trim().toLowerCase();
+    if (!email) { db.run('DELETE FROM employee_contacts WHERE employee_id=?', [eid]); return; }
+    if (!/^[^\s@]{1,64}@[^\s@]{1,190}\.[a-z]{2,}$/.test(email)) throw bad('That email address does not look right.', 'email');
+    const other = db.get('SELECT employee_id FROM employee_contacts WHERE email=? AND employee_id != ?', [email, eid]);
+    if (other) throw new HubError(409, 'email_taken', 'That email is already used by another account.');
+    db.run('INSERT INTO employee_contacts (employee_id, email, updated_at) VALUES (?,?,?) ON CONFLICT(employee_id) DO UPDATE SET email=excluded.email, updated_at=excluded.updated_at', [eid, email, nowIso()]);
+  }
   function accountFields(input, existing) {
     const name = String(input.name ?? existing?.display_name ?? '').trim().replace(/\s+/g, ' ');
     if (!name || name.length > 80) throw bad('Enter the person\'s name.', 'name');
@@ -871,7 +898,8 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     tx(() => {
       db.run(`INSERT INTO employees (id, display_name, preferred_language, status, start_date, supervisor_id, roles, department, sms_phone, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
         [eid, f.name, f.language, 'active', start, f.reportsTo, JSON.stringify(f.roles), f.department, f.smsPhone, nowIso()]);
-      audit(ctx.me.id, 'account.created', 'employee', eid, { roles: f.roles, reportsTo: f.reportsTo });
+      setEmail(eid, input.email);
+      audit(ctx.me.id, 'account.created', 'employee', eid, { roles: f.roles, reportsTo: f.reportsTo, email: !!input.email });
     });
     const e = emp(eid);
     const pinOut = await issueTempPin(ctx, e, 'new_account');
@@ -887,6 +915,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     const becameManagement = !isElevated(e) && f.roles.some(r => r !== 'employee');
     tx(() => {
       db.run('UPDATE employees SET display_name=?, preferred_language=?, roles=?, supervisor_id=?, department=?, sms_phone=? WHERE id=?', [f.name, f.language, JSON.stringify(f.roles), f.reportsTo, f.department, f.smsPhone, e.id]);
+      setEmail(e.id, input.email);
       // A role change ends open sessions so new permissions (and MFA) apply at next sign-in.
       if (JSON.stringify(f.roles) !== e.roles) db.run("UPDATE sessions SET revoked_at=?, revoke_reason='role_changed' WHERE employee_id=? AND revoked_at IS NULL", [nowIso(), e.id]);
       audit(ctx.me.id, 'account.updated', 'employee', e.id, { from: JSON.parse(e.roles), to: f.roles, reportsTo: f.reportsTo });
@@ -1764,6 +1793,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
         db.run("UPDATE sessions SET revoked_at=?, revoke_reason='separated' WHERE employee_id=? AND revoked_at IS NULL", [nowIso(), e.id]);
         db.run("UPDATE notifications SET status='cancelled' WHERE recipient_id=? AND status IN ('queued','sent')", [e.id]);
         dropPasskeys(e.id, ctx.me.id, 'deactivated');
+        db.run("UPDATE invites SET revoked_at=? WHERE employee_id=? AND used_at IS NULL AND revoked_at IS NULL", [nowIso(), e.id]);
         db.run("UPDATE push_subscriptions SET removed_at=?, remove_reason='deactivated' WHERE employee_id=? AND removed_at IS NULL", [nowIso(), e.id]);
       }
       audit(ctx.me.id, 'employee.status', 'employee', e.id, { status, endDate: end, sessionsRevoked: revoked });
@@ -2261,13 +2291,111 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     return { ok: true, linkedTo: { id: u.id, name: u.name } };
   };
 
+  // ---------------------------------------------------------------- onboarding invites (R1.3, owner 2026-10-27)
+  // Management sends a welcome email (or shows the link as a QR code in person). The link works once,
+  // for 72 hours, and lets the person choose their PIN; then the guided phone setup takes over.
+  // Email goes out only from the live Hub (Resend, innerspacecases.com); the test copy keeps a preview.
+  const INVITE_HOURS = 72;
+  const mailer = 'mailer' in platform ? platform.mailer : makePreviewMailer();
+  const previews = new Map();   // test copy: invite id -> email html, shown to the manager instead of sending
+  const canInvite = (ctx, e) => !!e && e.id !== ctx.me.id && (has(ctx, 'hr') || (has(ctx, 'supervisor') && e.supervisor_id === ctx.me.id && !isElevated(e)));
+  const inviteByToken = (token) => (typeof token === 'string' && /^[a-f0-9]{64}$/.test(token)) ? db.get('SELECT * FROM invites WHERE token_hash=?', [crypto.sha256('invite|' + token)]) : null;
+  const inviteValid = (inv) => !!inv && !inv.used_at && !inv.revoked_at && inv.expires_at > nowIso();
+  A['invite.create'] = async (ctx, { employeeId, send } = {}) => {
+    const e = emp(employeeId);
+    if (!e || e.status !== 'active') throw notFound();
+    if (!canInvite(ctx, e)) throw deny('Only a full-access manager, or the person\'s own manager, can invite someone.');
+    if (!rpOk(ctx.rp)) throw bad('Open the Hub at its web address to make an invite.', 'no_rp');
+    const email = emailOf(e.id);
+    if (send && !email) throw bad('Add the person\'s email first (Edit), or show the QR code instead.', 'no_email');
+    if (send && !mailer) throw new HubError(409, 'email_off', 'Email sending is not set up yet (RESEND_API_KEY). Show the QR code instead.');
+    const token = crypto.randomHex(32), iid = id('INV'), n = now();
+    const expires = new Date(n.getTime() + INVITE_HOURS * 3600000).toISOString();
+    const link = `${ctx.rp.origin}/#/join/${token}`;
+    tx(() => {
+      db.run("UPDATE invites SET revoked_at=? WHERE employee_id=? AND used_at IS NULL AND revoked_at IS NULL", [n.toISOString(), e.id]);
+      db.run('INSERT INTO invites (id, employee_id, token_hash, created_by, created_at, expires_at) VALUES (?,?,?,?,?,?)', [iid, e.id, crypto.sha256('invite|' + token), ctx.me.id, n.toISOString(), expires]);
+      audit(ctx.me.id, 'invite.created', 'employee', e.id, { inviteId: iid, send: !!send });
+    });
+    let sent = null;
+    if (send) {
+      const expiresText = new Intl.DateTimeFormat(e.preferred_language === 'es' ? 'es-US' : 'en-US', { timeZone: tz, weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(expires));
+      const msg = inviteEmail({ name: e.display_name, link, expiresText: (e.preferred_language === 'es' ? 'el ' : 'on ') + expiresText, lang: e.preferred_language, logoUrl: `${ctx.rp.origin}/innerspace-logo-white.png`, inviterName: ctx.me.display_name, management: isElevated(e) });
+      const r = await mailer.send({ to: email, ...msg });
+      tx(() => {
+        db.run('UPDATE invites SET sent_to=?, sent_at=?, send_detail=? WHERE id=?', [email, r.ok ? nowIso() : null, r.detail, iid]);
+        audit(ctx.me.id, r.ok ? 'invite.emailed' : 'invite.email_failed', 'employee', e.id, { inviteId: iid, live: !!mailer.live, detail: r.detail });
+      });
+      if (!mailer.live) { previews.set(iid, { html: msg.html, employeeId: e.id }); while (previews.size > 20) previews.delete(previews.keys().next().value); }
+      sent = { ok: r.ok, to: email, live: !!mailer.live, detail: r.detail, preview: mailer.live ? null : { subject: msg.subject, inviteId: iid } };
+      if (!r.ok) throw new HubError(502, 'email_failed', `The email could not be sent (${r.detail}). Show the QR code instead, or try again.`);
+    }
+    return { link, expiresAt: expires, employee: pub(e), sent, emailLive: !!mailer.live };
+  };
+  A['invite.revoke'] = (ctx, { employeeId }) => {
+    const e = emp(employeeId);
+    if (!canInvite(ctx, e)) throw deny();
+    tx(() => { db.run("UPDATE invites SET revoked_at=? WHERE employee_id=? AND used_at IS NULL AND revoked_at IS NULL", [nowIso(), e.id]); audit(ctx.me.id, 'invite.revoked', 'employee', e.id, {}); });
+    return { ok: true };
+  };
+  A['invite.preview'] = (ctx, { inviteId }) => {
+    const pv = previews.get(String(inviteId || ''));
+    if (!pv || !canInvite(ctx, emp(pv.employeeId))) throw notFound();
+    return { html: pv.html };
+  };
+  A['invite.status'] = (ctx) => ({ emailLive: !!(mailer && mailer.live), emailAvailable: !!mailer });
+  // Public: the welcome page asks who the link is for (first name only) and whether it still works.
+  function invitePeek(token) {
+    const inv = inviteByToken(token);
+    if (!inv) return { valid: false, reason: 'unknown' };
+    const e = emp(inv.employee_id);
+    if (!e || e.status !== 'active') return { valid: false, reason: 'unknown' };
+    if (!inviteValid(inv)) return { valid: false, reason: inv.used_at ? 'used' : inv.revoked_at ? 'replaced' : 'expired' };
+    if (!inv.opened_at) tx(() => db.run('UPDATE invites SET opened_at=? WHERE id=?', [nowIso(), inv.id]));
+    return { valid: true, firstName: e.display_name.split(' ')[0], language: e.preferred_language, management: isElevated(e), employeeId: e.id, expiresAt: inv.expires_at };
+  }
+  // Public: choose the PIN with the invite. Starts a personal session. Management also gets a fresh
+  // authenticator secret to add on this phone (shown once) — the invite stands in for the temporary PIN.
+  async function inviteAccept({ token, newPin, confirmPin, deviceToken }) {
+    return serial(async () => {
+      const inv = inviteByToken(token);
+      if (!inviteValid(inv)) throw new HubError(410, 'invite_invalid', 'This invite link no longer works. Ask management for a new one.');
+      const e = emp(inv.employee_id);
+      if (!e || e.status !== 'active') throw new HubError(410, 'invite_invalid', 'This invite link no longer works. Ask management for a new one.');
+      if (String(newPin) !== String(confirmPin)) throw bad('The two PINs do not match.', 'pin_mismatch');
+      const problem = pinProblem(newPin, e.id);
+      if (problem) throw bad(problem, 'weak_pin');
+      const salt = crypto.randomHex(16), hash = await crypto.hashSecret(String(newPin), salt);
+      const device = deviceFromToken(deviceToken);
+      const elevated = isElevated(e);
+      let mfa = null;
+      if (elevated && cfg.elevatedRequireTotp) {
+        const secret = base32Encode(Uint8Array.from(crypto.randomHex(20).match(/../g), h => parseInt(h, 16)));
+        mfa = { secret, sealed: await crypto.sealSecret(secret), otpauth: `otpauth://totp/TAG%20Employee%20Hub:${encodeURIComponent(e.id)}?secret=${secret}&issuer=TAG%20Employee%20Hub` };
+      }
+      const token2 = crypto.randomHex(32), n = now();
+      const pol = device ? SESSION_POLICY.shared : (elevated ? SESSION_POLICY.elevated : SESSION_POLICY.personal);
+      tx(() => {
+        db.run("UPDATE employees SET pin_salt=?, pin_hash=?, pin_set_at=?, setup_code_hash=NULL, setup_code_expires=NULL, failed_logins=0, locked_until=NULL, hard_locked=0, lockouts_24h='[]' WHERE id=?", [salt, hash, n.toISOString(), e.id]);
+        if (mfa) db.run('UPDATE employees SET totp_secret=?, totp_last_counter=-1 WHERE id=?', [mfa.sealed, e.id]);
+        db.run('UPDATE invites SET used_at=? WHERE id=?', [n.toISOString(), inv.id]);
+        db.run("UPDATE sessions SET revoked_at=?, revoke_reason='invite_used' WHERE employee_id=? AND revoked_at IS NULL", [n.toISOString(), e.id]);
+        db.run(`INSERT INTO sessions (token_hash, employee_id, device_id, shared_device, must_set_pin, created_at, last_seen, idle_minutes, absolute_expires_at)
+                VALUES (?,?,?,?,?,?,?,?,?)`, [crypto.sha256(token2), e.id, device ? device.id : null, device ? 1 : 0, 0, n.toISOString(), n.toISOString(), pol.idleMinutes, new Date(n.getTime() + pol.absoluteMinutes * 60000).toISOString()]);
+        audit(e.id, 'invite.used', 'employee', e.id, { inviteId: inv.id, mfaEnrolled: !!mfa });
+        if (inv.created_by && inv.created_by !== e.id) queueNotification(inv.created_by, { kind: 'security', ref: e.id, subject: `${e.display_name} finished setting up their Hub account`, channels: ['in_app'], hold: false });
+      });
+      return { token: token2, idleMinutes: pol.idleMinutes, employee: pub(e), mfa: mfa ? { secret: mfa.secret, otpauth: mfa.otpauth } : null };
+    });
+  }
+
   // S5: backup export. A full-access manager downloads a complete copy of the records
   // (everything except sign-in secrets and live sessions) to keep outside Cloudflare.
   // The file carries the audit-chain head and its own SHA-256 so a copy can be checked later.
   const BACKUP_TABLES = ['employees', 'devices', 'esign_consents', 'absences', 'survey_assignments', 'survey_drafts', 'survey_submissions', 'survey_amendments',
     'supervisor_reviews', 'review_events', 'paper_events', 'safety_reports', 'safety_events', 'corrective_actions', 'ca_events', 'attachments', 'notifications',
-    'notification_attempts', 'audit_events', 'passkeys', 'qbt_links'];
-  const BACKUP_OMIT = { employees: ['pin_salt', 'pin_hash', 'setup_code_hash', 'setup_code_expires', 'setup_code_issued_by', 'totp_secret', 'totp_last_counter', 'failed_logins', 'locked_until', 'lockouts_24h', 'sim_fail_sms'], devices: ['token_hash'], passkeys: ['public_key_jwk', 'credential_id'] };
+    'notification_attempts', 'audit_events', 'passkeys', 'qbt_links', 'employee_contacts', 'invites'];
+  const BACKUP_OMIT = { employees: ['pin_salt', 'pin_hash', 'setup_code_hash', 'setup_code_expires', 'setup_code_issued_by', 'totp_secret', 'totp_last_counter', 'failed_logins', 'locked_until', 'lockouts_24h', 'sim_fail_sms'], devices: ['token_hash'], passkeys: ['public_key_jwk', 'credential_id'], invites: ['token_hash'] };
   A['admin.backupExport'] = (ctx) => {
     if (!has(ctx, 'hr')) throw deny('Only a full-access manager can export a backup.');
     tx(() => audit(ctx.me.id, 'backup.exported', 'system', 'all', { tables: BACKUP_TABLES.length }));
@@ -2307,7 +2435,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     return n;
   }
 
-  return { call, login, logout, passkeyOptions, passkeyLogin, ensurePushKeys, pushPublic, pushPending, pushTick, tick, sealLegacySecrets, recordRestores, publicInfo, kioskRoster, dispatchDue, deliveryReceipt, bootstrap, bootstrapStatus, bootstrapRecover, ensureAssignments, actions: Object.keys(A), config: cfg, _audit: audit, _serial: serial, _weekFor: weekFor };
+  return { call, login, logout, passkeyOptions, passkeyLogin, invitePeek, inviteAccept, ensurePushKeys, pushPublic, pushPending, pushTick, tick, sealLegacySecrets, recordRestores, publicInfo, kioskRoster, dispatchDue, deliveryReceipt, bootstrap, bootstrapStatus, bootstrapRecover, ensureAssignments, actions: Object.keys(A), config: cfg, _audit: audit, _serial: serial, _weekFor: weekFor };
 }
 
 export const TYPE_LABEL = {

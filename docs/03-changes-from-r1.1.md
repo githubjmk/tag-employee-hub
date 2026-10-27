@@ -213,3 +213,14 @@ Added after you sent the paper source: the signed record's heading now matches t
   - Always available under More → Set up this phone.
 - The pictures are still images when the phone has "reduce motion" turned on.
 - Covered by browser test U16.
+
+## Onboarding email (owner 2026-10-27: "send them an email so its like an onboarding process")
+- Accounts → Add a person has an **Email** field and a **Send the welcome email now** box (ticked). Existing people get **Send welcome email** / **Show invite QR code** buttons.
+- The email (English or Spanish, by the person's language) comes from **Innerspace Employee Hub &lt;info@innerspacecases.com&gt;** (owner 2026-10-27), so replies land in the info@ mailbox. It has one button, **Set up my account**, and the steps.
+- The link works **once, for 72 hours**. A new invite cancels the old one; deactivating someone cancels theirs. Only a hash of the link is stored.
+- Opening the link: "Welcome, {first name}" → choose a PIN → the guided phone setup (home-screen icon, Face ID, reminders). Management also gets their authenticator code on that phone (shown once).
+- The temporary PIN is still made, folded under "Backup", for when the email doesn't arrive.
+- Accounts shows each person's setup list: Invited · PIN · Face ID · Reminders · First report. The person who sent the invite gets a Hub notice when setup is finished.
+- The ID box at sign-in also accepts the person's email.
+- Who can invite: a full-access manager (anyone), or a manager (their own staff only).
+- **Test copy never sends email**: it shows a preview of the exact email instead. The live Hub sends through Resend only once the `RESEND_API_KEY` secret is added (see `10-onboarding-email-setup.md`); without it, invites still work as a QR code or a copied link.
