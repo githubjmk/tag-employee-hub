@@ -149,3 +149,7 @@ On a person's **own phone** the PIN can be replaced by the phone's own lock: Fac
 - Note: management Face ID relies on the phone's own lock. A passkey kept in a shared password group would be shared too, so management should keep their passkey in their own account.
 - Independent review (2026-10-25) found gaps in the first version; these rules close them. Tests PK-12 and PK-13 cover them.
 - Every setup, removal, sign-in and failure is in the hash-chained audit log.
+
+**Owner decisions (2026-10-26: "yes face id should be king"):**
+- The Face ID wording of the signing statement is approved.
+- A management Face ID sign-in replaces the authenticator code. Restore still needs PIN + code.
