@@ -206,3 +206,14 @@ New checks:
 - API: 75/75 (`npm test`), including IN-01…IN-06. These cover the Resend request from info@innerspacecases.com; the preview-only test copy; the single-use 72-hour link; PIN and session on accept; a fresh authenticator code for management; login by email; who can invite; and revoke and deactivation.
 - Browser: 17/17 on the Node server and 17/17 on local Cloudflare (wrangler dev), including U17. U17 covers adding a person with an email, the styled email preview, opening the link on a phone, choosing a PIN, landing in the guided setup, the link refusing a second use, and the setup list showing Invited and PIN.
 - Not tested: a real email delivery. That needs the live `RESEND_API_KEY`, which has not been added.
+
+## Choose-your-PIN page and My InnerPoints (2026-10-27)
+- API: 79/79 (`npm test`), including IP-01…IP-04. These cover:
+  - read-only queries to the InnerPoints ledger only, with paging;
+  - reversed points left out;
+  - dropped or changed fields and refused tokens stopping with a message;
+  - linking by full access only;
+  - hide/show;
+  - no card when not connected.
+- Browser: 18/18 on the Node server and 18/18 on local Cloudflare. This includes U17, now as a new iPhone: the new PIN page, the mismatch caught on the phone, Show PIN, letters dropped, then the guide with moving pictures. It also includes U18: linking in Admin → InnerPoints, the card on Home above My weekly reports, and no card for unlinked people.
+- Not tested: real Quickbase data. That needs the live `QB_TOKEN`, which has not been added.
