@@ -633,3 +633,9 @@ form.one-q .opt input:checked + span { animation: picked .28s ease-out; }
 .ip-recent li { display: flex; gap: 10px; align-items: baseline; padding: 7px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
 .ip-plus { flex: none; min-width: 2.6em; font-weight: 800; color: var(--ok); font-variant-numeric: tabular-nums; }
 .nowrap { white-space: nowrap; }
+
+/* Management Home: "Your team" */
+.team-card { border-top: 4px solid var(--brand); }
+.team-card h2 { margin: 0; }
+.tiles.compact { margin: 8px 0 12px; }
+.tiles.compact .tile b { font-size: 1.4rem; }

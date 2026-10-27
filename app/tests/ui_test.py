@@ -220,7 +220,7 @@ def t_e2e(browser, errors):
         pg.wait_for_selector('.portal-public, .login-card')
         ctx.close(); ctx, pg = new_page(browser, TABLET, errors)
         login(pg, srv, 'E-102', shared=False)
-        assert '#/dash' in pg.url, 'management land on the dashboard'
+        assert '#/home' in pg.url, 'management land on their Home (owner 2026-10-27)'
         pg.goto(srv.base + '#/team?tab=awaiting'); pg.wait_for_selector('main h1')
         pg.click(f'a[href="#/record/{sub_id}"]')
         pg.wait_for_selector('#review-panel')
@@ -995,6 +995,30 @@ def t_points(browser, errors):
         expect(pg.locator('.my-points')).to_have_count(0)
         ctx.close()
         return 'linked by a click in Admin; card on Home above My weekly reports; unlinked people see nothing'
+
+
+
+@test('U19 management Home: managers land on Home with their own report, a Your team summary and the way into the dashboard')
+def t_mgr_home(browser, errors):
+    with Server() as srv:
+        ctx, pg = new_page(browser, PHONE, errors)
+        login(pg, srv, 'E-102', shared=False)
+        assert pg.url.endswith('#/home') or '#/checkin' in pg.url, pg.url
+        pg.goto(srv.base + '#/home'); pg.wait_for_selector('.team-card .tiles')
+        expect(pg.locator('nav.tabbar a[href="#/home"]')).to_be_visible()
+        expect(pg.locator('.team-card h2')).to_have_text('Your team')
+        expect(pg.locator('.big-actions')).to_be_visible()                          # their own weekly report + safety
+        expect(pg.locator('.my-week')).to_be_visible()
+        axe(pg, 'manager home'); no_hscroll(pg, 'manager home'); shot(pg, 'u19-01-manager-home')
+        pg.click('.team-card a.btn.primary'); pg.wait_for_selector('main h1:has-text("Weekly completion")')
+        ctx.close()
+        ctx, pg = new_page(browser, TABLET, errors)
+        login(pg, srv, 'E-101', shared=False)
+        pg.goto(srv.base + '#/home'); pg.wait_for_selector('.team-card')
+        expect(pg.locator('.team-card')).to_contain_text('Everyone')
+        pg.click('.team-card a[href="#/accounts"]'); pg.wait_for_selector('main h1:has-text("Employee accounts")')
+        ctx.close()
+        return 'managers: Home (own report, points, team summary) -> dashboard / accounts'
 
 
 if __name__ == '__main__':

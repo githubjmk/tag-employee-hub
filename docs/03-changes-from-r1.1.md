@@ -243,3 +243,11 @@ Added after you sent the paper source: the signed record's heading now matches t
 - Live checks as they type: "6 to 12 numbers" and "Both PINs match".
 - A Show PIN button; letters are dropped automatically.
 - Mistakes are caught on the phone before anything is sent.
+
+## Management Home (owner 2026-10-27: "Why does a manager not have a home page?")
+- Managers now land on **Home**, the same Home everyone has: their own weekly report, safety report button, My InnerPoints, My weekly reports, phone setup and company links.
+- At the top is a **Your team** card with:
+  - any urgent safety alert;
+  - this week's signed count, missing, waiting for review and waiting on an employee;
+  - **Open the dashboard** and **People & invites** buttons.
+- Bottom bar for managers: Home · Dashboard · Review · Safety · More. Accounts ("People & invites") moved to the Home team card and More.

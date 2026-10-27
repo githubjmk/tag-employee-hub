@@ -131,10 +131,8 @@ const icon = (n) => ICONS[n] ? raw(`<svg class="ic" viewBox="0 0 24 24" aria-hid
 function navItems() {
   if (!S.me) return [];
   if (!isStaff()) return [['#/home', 'home', t('nav_home')], ['#/checkin', 'check', t('nav_survey')], ['#/safety', 'alert', t('nav_safety')], ['#/more', 'more', t('nav_more')]];
-  const items = [['#/dash', 'chart', t('nav_dash')], ['#/team', 'team', t('nav_review')], ['#/safety', 'alert', 'Safety']];
-  if (can('accounts.manage') || can('accounts.pinReset.team')) items.push(['#/accounts', 'lock', t('nav_accounts')]);
-  items.push(['#/more', 'more', t('nav_more')]);
-  return items;
+  // Management (owner 2026-10-27): their own Home first, then the team screens. Accounts is under More and on Home.
+  return [['#/home', 'home', t('nav_home')], ['#/dash', 'chart', t('nav_dash')], ['#/team', 'team', t('nav_review')], ['#/safety', 'alert', t('nav_safety')], ['#/more', 'more', t('nav_more')]];
 }
 function bottomItems() { return navItems(); }
 
@@ -289,8 +287,8 @@ function setupView(msg, result, restart = false) {
 async function afterSignIn() {
   const next = S.next; S.next = null;
   const NEXT = { safety: '#/safety/new', checkin: '#/checkin', dash: '#/dash' };
-  if (next && NEXT[next]) return go(isStaff() && next === 'checkin' ? '#/dash' : NEXT[next]);
-  if (isStaff()) return go('#/dash');
+  if (next && NEXT[next]) return go(NEXT[next]);
+  if (isStaff()) return go('#/home');
   if (!surveyOpen()) return go('#/home');
   try {
     const h = await call('home', {});
@@ -574,7 +572,6 @@ async function quickSubmit(form, btn) {
 
 // ---------------------------------------------------------------- employee home
 async function homeView() {
-  if (isStaff()) return go('#/dash');
   loadingView('#/home');
   await refreshMe();
   const h = await call('home', {});
@@ -592,6 +589,7 @@ async function homeView() {
     : html`<a class="big-action done" href="#/checkin">${icon('shield')}<span><strong>${cur && cur.state.startsWith('submitted') ? t('home_survey_done') : t('home_survey')}</strong><small>${cur ? chip(cur.state) : ''}</small></span></a>`;
   render('#/home', html`
     <section class="portal-hero"><p class="eyebrow">Innerspace Cases · ${fmtDate(S.me.now, { weekday: 'long', month: 'long', day: 'numeric' })}</p><h1>${t('hello')}, ${h.greetingName}</h1><span class="gold-rule" aria-hidden="true"></span></section>
+    ${isStaff() ? html`<div id="team-slot"></div>` : ''}
     ${todo.length ? html`<section class="card attention"><h2>${t('attention')}</h2><div class="todo-list">${todo}</div></section>` : ''}
     <div id="guide-slot"></div>
     <div class="big-actions">
@@ -604,6 +602,7 @@ async function homeView() {
     ${h.safety.length ? html`<section class="card"><h2>${t('my_reports')}</h2><ul class="plain-list">${h.safety.map(r => html`<li><a href="#/safety/r/${r.id}">${t('t_' + r.type)}</a><span>${sChip(r.status)} <span class="meta">${fmtDate(r.created_at)}</span></span></li>`)}</ul></section>` : ''}
     ${h.links && h.links.length ? html`<h2 class="portal-section-title">${t('links')}</h2><div class="portal-tiles">${h.links.map(l => html`<a class="portal-tile" href="${l.url}" target="_blank" rel="noopener noreferrer">${icon('ext')}<strong>${L(l.label)}</strong><small>${l.note}</small><span class="sr">(${t('opens_new')})</span></a>`)}</div>` : ''}
     ${S.lang === 'es' ? html`<p class="fine">${t('es_draft')}</p>` : ''}`);
+  if (isStaff()) loadTeamCard();
   loadPoints(); loadHours(); guideCard();
 }
 // "My weekly reports": this week and last week at a glance, including where the review is.
@@ -642,6 +641,25 @@ async function loadHours(slotId = 'hours-slot') {
   let r; try { r = await api.call('hours.mine', {}); } catch (e) { const s2 = document.getElementById(slotId); if (s2 && !(e instanceof ApiError && e.status === 401)) s2.innerHTML = String(html`<section class="card my-hours"><h2>${t('hrs_title')}</h2><p class="meta">${t('hrs_err')}</p></section>`); return; }
   const s2 = document.getElementById(slotId); if (!s2 || !r.available || !r.linked) return;
   s2.innerHTML = String(hoursCard(r)); applyCssVars(s2);
+}
+// Management Home: the team at a glance (this week), with the way into the full dashboard.
+async function loadTeamCard() {
+  const slot = document.getElementById('team-slot'); if (!slot) return;
+  let d, alerts;
+  try { [d, alerts] = await Promise.all([api.call('mgmt.dashboard', { view: 'week' }), api.call('alerts.mine', {})]); } catch { return; }
+  const s2 = document.getElementById('team-slot'); if (!s2) return;
+  const urgent = alerts.filter(n => n.urgent && !n.seen_at);
+  const W = d.weeks && d.weeks[0];
+  const tile = (n, label, href, tone = '') => html`<a class="tile ${tone}" href="${href}"><b>${n}</b><span>${label}</span></a>`;
+  const people = can('accounts.manage') || can('accounts.pinReset.team');
+  s2.innerHTML = String(html`<section class="card team-card"><div class="row between wrap"><h2>${t('team_title')}</h2><span class="meta">${d.scope === 'team' ? t('team_mine') : d.scope === 'all' ? t('team_all') : t('team_safety')}</span></div>
+    ${urgent.length ? html`<a class="stop-banner" href="${refHref(urgent[0])}" data-seen="${urgent[0].id}">${icon('alert')}<span><strong>${urgent.length} ${t(urgent.length === 1 ? 'team_urgent' : 'team_urgent_n')}</strong><br>${urgent[0].subject}</span></a>` : ''}
+    ${W && d.scope !== 'safety-only' ? html`<p class="meta">${t('week_of')} ${fmtDate(d.focusWeek.start)}</p><div class="tiles compact">
+      ${tile(`${W.onTime + W.late + W.paper} / ${W.expected}`, t('team_signed'), '#/dash')}
+      ${tile(W.missing, t('team_missing'), '#/dash', W.missing ? 'warn' : '')}
+      ${tile(W.awaitingReview, t('team_review'), '#/team?tab=awaiting', W.awaitingReview ? 'info' : '')}
+      ${tile(W.waitingOnEmployee, t('team_waiting'), '#/team?tab=waiting')}</div>` : ''}
+    <div class="row wrap"><a class="btn primary" href="#/dash">${icon('chart')} ${t('team_open')}</a>${people ? html`<a class="btn" href="#/accounts">${icon('lock')} ${t('team_people')}</a>` : ''}</div></section>`);
 }
 // "My InnerPoints" from the Order Manager ledger (read-only). Loaded after the page, like My hours.
 const fmtN = (n) => Number(n || 0).toLocaleString(locale());
@@ -1317,7 +1335,8 @@ function moreView() {
   render('#/more', html`<h1>${t('more_title')}</h1>
     <div class="stack">
       ${isStaff() ? html`<a class="card row link-row" href="#/checkin">${icon('check')}<span class="grow">My weekly survey and previous surveys</span></a>
-        <a class="card row link-row" href="#/actions">${icon('wrench')}<span class="grow">All corrective actions</span></a>` : ''}
+        <a class="card row link-row" href="#/actions">${icon('wrench')}<span class="grow">All corrective actions</span></a>
+        ${can('accounts.manage') || can('accounts.pinReset.team') ? html`<a class="card row link-row" href="#/accounts">${icon('lock')}<span class="grow">${t('team_people')}</span></a>` : ''}` : ''}
       ${!m.deviceId ? html`<a class="card row link-row" href="#/getstarted">${icon('check')}<span class="grow">${t('gs_card_t')}</span></a>` : ''}
       <a class="card row link-row" href="#/alerts">${icon('bell')}<span class="grow">${t('alerts_title')}</span>${unseen ? html`<b class="badge">${unseen}</b>` : ''}</a>
       ${!isStaff() ? html`<a class="card row link-row" href="#/safety">${icon('alert')}<span class="grow">${t('my_reports')}</span></a>` : ''}
