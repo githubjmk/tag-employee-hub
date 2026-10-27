@@ -927,7 +927,9 @@ def t_invite(browser, errors):
         expect(pg.locator('.acct-out > details > summary')).to_contain_text('Backup: temporary PIN')
         axe(pg, 'invite result'); shot(pg, 'u17-01-invite-preview')
         new_id = pg.locator('.acct-out:has(.invite-box)').locator('xpath=ancestor::article').get_attribute('id').replace('acct-', '')
-        phone, ph = new_page(browser, PHONE, errors)
+        phone, ph = new_page(browser, PHONE, errors, user_agent=IPHONE_UA)   # a new person's iPhone
+        if not EXTERNAL or '127.0.0.1' in srv.base:
+            virtual_authenticator(phone, ph); link = link.replace('127.0.0.1', 'localhost')
         ph.goto(link)
         ph.wait_for_selector('form[data-form=join]')
         expect(ph.locator('h1')).to_contain_text('Uma')
@@ -937,9 +939,12 @@ def t_invite(browser, errors):
         ph.wait_for_selector('.join-card .alert')
         ph.fill('input[name=newPin]', '58302719'); ph.fill('input[name=confirmPin]', '58302719')
         ph.click('form[data-form=join] button[type=submit]')
-        ph.wait_for_selector('.guide')
+        ph.wait_for_selector('.demo-phone.ios')   # step 1 of the guide: add to home screen, with the moving picture
         assert '#/getstarted' in ph.url
+        expect(ph.locator('.guide .stepper')).to_contain_text('1')
         shot(ph, 'u17-03-guide')
+        ph.click('[data-act=gs-next]'); ph.wait_for_selector('.demo-phone.face')
+        shot(ph, 'u17-04-guide-faceid')
         ph.goto(link); ph.wait_for_selector('.join-card h1')
         expect(ph.locator('form[data-form=join]')).to_have_count(0)
         phone.close()
