@@ -357,14 +357,32 @@ async function joinView(token, msg) {
     <div class="login-brand logo-top"><img class="login-logo" src="${IS_LOGO_NAVY}" alt="Innerspace Cases" width="337" height="124"></div>${inner}
     <button class="lang standalone" data-act="lang-join" data-token="${token}">${S.lang === 'en' ? 'Español' : 'English'}</button></div>${copyright()}</main>`); root.querySelector(msg ? '.alert' : 'h1').focus(); };
   if (!p.valid) return card(html`<h1 tabindex="-1">${t('join_bad')}</h1><p>${t('join_bad_body')}</p><a class="btn wide" href="#/home">${t('portal_back')}</a>`);
-  card(html`<h1 tabindex="-1">${t('join_hi').replace('{n}', p.firstName)}</h1><p>${t('join_intro')}</p>
-    ${msg ? html`<p class="alert" role="alert">${msg}</p>` : ''}
-    <form data-form="join" data-token="${token}" novalidate>
+  const steps = [['pin', 'lock'], ...(p.management ? [['mfa', 'shield']] : []), ['home', 'home'], ['face', 'face']];
+  card(html`<h1 tabindex="-1">${t('join_hi').replace('{n}', p.firstName)}</h1>
+    <p class="join-lead">${t('join_lead')} <strong>${t('join_count').replace('{n}', steps.length)}</strong></p>
+    <ol class="join-steps">${steps.map(([k, ic], i) => html`<li class="${i === 0 ? 'now' : ''}"><span class="js-num" aria-hidden="true">${i + 1}</span><span class="js-ic" aria-hidden="true">${ic === 'face' ? FACE_IC : icon(ic)}</span><span class="js-label">${t('join_s_' + k)}</span>${i === 0 ? html`<span class="chip c-open">${t('join_now_tag')}</span>` : ''}</li>`)}</ol>
+    ${msg ? html`<p class="alert" role="alert" tabindex="-1">${msg}</p>` : ''}
+    <form data-form="join" data-token="${token}" class="join-form" novalidate>
+      <h2 class="h3">${t('join_now')}</h2>
+      <div class="pin-demo" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><b>✓</b></div>
+      <p class="meta">${t('join_pin_help')}</p>
+      <label class="field"><span>${t('join_pin')}</span><input name="newPin" id="jp1" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="12" autocomplete="new-password" required aria-describedby="join-checks"></label>
+      <label class="field"><span>${t('join_pin2')}</span><input name="confirmPin" id="jp2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="12" autocomplete="new-password" required aria-describedby="join-checks"></label>
+      <button type="button" class="btn-quiet" data-act="join-show" aria-pressed="false">${t('join_show')}</button>
+      <ul class="join-checks" id="join-checks" aria-live="polite"><li data-ck="len">${t('join_ck_len')}</li><li data-ck="match">${t('join_ck_match')}</li></ul>
       <p class="meta">${t('signin_id')}: <strong>${p.employeeId}</strong></p>
-      <label class="field"><span>${t('join_pin')}</span><input name="newPin" type="password" inputmode="numeric" maxlength="12" autocomplete="new-password" required></label>
-      <label class="field"><span>${t('join_pin2')}</span><input name="confirmPin" type="password" inputmode="numeric" maxlength="12" autocomplete="new-password" required></label>
       <button class="btn primary wide" type="submit">${t('join_btn')}</button></form>`);
 }
+// Live checks on the PIN page: numbers only, length, both the same.
+function joinChecks(form) {
+  const a = form.elements.newPin, b = form.elements.confirmPin;
+  for (const el of [a, b]) { const d = el.value.replace(/\D/g, ''); if (d !== el.value) el.value = d; }
+  const len = a.value.length >= 6 && a.value.length <= 12, match = len && a.value === b.value;
+  const set = (k, ok) => form.querySelector(`[data-ck="${k}"]`)?.classList.toggle('ok', ok);
+  set('len', len); set('match', match);
+  return len && match;
+}
+const FACE_IC = raw('<svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M9 10v1M15 10v1M12 10v3h-1M9.5 16a3.5 3.5 0 0 0 5 0"/></svg>');
 function joinMfaView(mfa) {
   const src = qrSrc(mfa.otpauth);
   root.innerHTML = String(html`<main id="main" class="login" tabindex="-1"><div class="login-card join-card">
@@ -1595,6 +1613,11 @@ root.addEventListener('click', async (ev) => {
     el.disabled = false; return;
   }
   if (act === 'lang-join') { S.lang = S.lang === 'en' ? 'es' : 'en'; document.documentElement.lang = S.lang; return joinView(el.dataset.token); }
+  if (act === 'join-show') {
+    const on = el.getAttribute('aria-pressed') !== 'true';
+    el.closest('form').querySelectorAll('input[name=newPin], input[name=confirmPin]').forEach(i => { i.type = on ? 'text' : 'password'; });
+    el.setAttribute('aria-pressed', String(on)); el.textContent = t(on ? 'join_hide' : 'join_show'); return;
+  }
   if (act === 'join-continue') { await loadMe(); document.body.classList.remove('plain'); return route(); }
   if (act === 'pk-login') {
     el.disabled = true;
@@ -1721,6 +1744,7 @@ root.addEventListener('click', (ev) => {
   }, 280);
 });
 root.addEventListener('input', (ev) => {
+  if (ev.target.closest('form[data-form="join"]')) joinChecks(ev.target.closest('form'));
   if (ev.target.closest('form[data-form="survey-step"]') && ev.target.tagName === 'TEXTAREA') { collectStep(false); scheduleSave(); }
 });
 root.addEventListener('toggle', async (ev) => {
@@ -1770,6 +1794,11 @@ root.addEventListener('submit', async (ev) => {
     catch (e) { return setPinView(errMsg(e)); }
   }
   if (kind === 'join') {
+    if (!joinChecks(form)) {
+      const bad = form.querySelector('[data-ck]:not(.ok)');
+      bad?.classList.add('miss'); (bad?.dataset.ck === 'len' || !f.newPin.value ? f.newPin : f.confirmPin).focus();
+      announce(bad ? bad.textContent : ''); return;
+    }
     btn.disabled = true;
     try {
       const r = await api.inviteAccept({ token: form.dataset.token, newPin: f.newPin.value, confirmPin: f.confirmPin.value });

@@ -934,10 +934,19 @@ def t_invite(browser, errors):
         ph.wait_for_selector('form[data-form=join]')
         expect(ph.locator('h1')).to_contain_text('Uma')
         axe(ph, 'join page'); no_hscroll(ph, 'join page'); shot(ph, 'u17-02-join')
+        expect(ph.locator('.join-steps li')).to_have_count(3)                       # PIN, home screen, Face ID
+        expect(ph.locator('.join-steps li.now')).to_contain_text('Choose a PIN')
         ph.fill('input[name=newPin]', '58302719'); ph.fill('input[name=confirmPin]', '58302710')
-        ph.click('form[data-form=join] button[type=submit]')
-        ph.wait_for_selector('.join-card .alert')
-        ph.fill('input[name=newPin]', '58302719'); ph.fill('input[name=confirmPin]', '58302719')
+        expect(ph.locator('[data-ck=len]')).to_have_class(re.compile('ok'))
+        expect(ph.locator('[data-ck=match]')).not_to_have_class(re.compile('ok'))
+        ph.click('form[data-form=join] button[type=submit]')                        # caught on the phone, nothing sent
+        expect(ph.locator('[data-ck=match]')).to_have_class(re.compile('miss'))
+        expect(ph.locator('input[name=confirmPin]')).to_be_focused()
+        ph.click('[data-act=join-show]'); expect(ph.locator('input[name=newPin]')).to_have_attribute('type', 'text')
+        ph.fill('input[name=confirmPin]', '5830271a9')                              # letters are dropped
+        expect(ph.locator('input[name=confirmPin]')).to_have_value('58302719')
+        expect(ph.locator('[data-ck=match]')).to_have_class(re.compile('ok'))
+        shot(ph, 'u17-02b-join-ready')
         ph.click('form[data-form=join] button[type=submit]')
         ph.wait_for_selector('.demo-phone.ios')   # step 1 of the guide: add to home screen, with the moving picture
         assert '#/getstarted' in ph.url

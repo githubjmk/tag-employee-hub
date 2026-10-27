@@ -589,3 +589,28 @@ form.one-q .opt input:checked + span { animation: picked .28s ease-out; }
 .invite-box .qr { display: block; margin: 8px auto; }
 .email-preview iframe { width: 100%; height: 520px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
 .join-card h1 { margin-top: 6px; }
+
+/* Invite: the "choose your PIN" page */
+.join-lead { margin: 4px 0 12px; }
+.join-steps { list-style: none; margin: 0 0 18px; padding: 0; display: grid; gap: 8px; }
+.join-steps li { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); color: var(--ink-2); }
+.join-steps li.now { border: 2px solid var(--accent); background: var(--accent-soft); color: var(--ink); font-weight: 650; }
+.join-steps .js-num { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: .85rem; font-weight: 700; background: var(--line); color: var(--ink); }
+.join-steps li.now .js-num { background: var(--accent); color: var(--on-accent, #fff); }
+.join-steps .js-ic .ic { width: 22px; height: 22px; }
+.join-steps .js-label { flex: 1; }
+.join-form { border-top: 1px solid var(--line); padding-top: 14px; }
+.join-form h2 { margin: 0 0 6px; }
+.pin-demo { display: flex; gap: 8px; justify-content: center; align-items: center; margin: 8px 0 10px; }
+.pin-demo span { width: 30px; height: 38px; border: 2px solid var(--line); border-radius: 8px; background: var(--surface); position: relative; }
+.pin-demo span::after { content: ''; position: absolute; inset: 0; margin: auto; width: 10px; height: 10px; border-radius: 50%; background: var(--ink); transform: scale(0); animation: pin-dot 4s infinite; }
+.pin-demo span:nth-child(2)::after { animation-delay: .3s; } .pin-demo span:nth-child(3)::after { animation-delay: .6s; }
+.pin-demo span:nth-child(4)::after { animation-delay: .9s; } .pin-demo span:nth-child(5)::after { animation-delay: 1.2s; } .pin-demo span:nth-child(6)::after { animation-delay: 1.5s; }
+.pin-demo b { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--ok); color: #fff; opacity: 0; animation: pin-ok 4s infinite; }
+@keyframes pin-dot { 0%, 3% { transform: scale(0); } 8%, 80% { transform: scale(1); } 88%, 100% { transform: scale(0); } }
+@keyframes pin-ok { 0%, 45% { opacity: 0; transform: scale(.6); } 52%, 80% { opacity: 1; transform: scale(1); } 88%, 100% { opacity: 0; } }
+.join-checks { list-style: none; padding: 0; margin: 4px 0 12px; display: grid; gap: 4px; font-size: .95rem; color: var(--ink-2); }
+.join-checks li::before { content: '○ '; }
+.join-checks li.ok { color: var(--ok); font-weight: 650; } .join-checks li.ok::before { content: '✓ '; }
+.join-checks li.miss:not(.ok) { color: var(--danger); font-weight: 650; }
+@media (prefers-reduced-motion: reduce) { .pin-demo span::after { animation: none; transform: scale(1); } .pin-demo b { animation: none; opacity: 1; } }
