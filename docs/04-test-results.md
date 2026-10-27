@@ -12,6 +12,31 @@ Every result below comes from the final run on 2026-10-14, after all R1.2 change
 
 Wrangler 4.20.0 was used for the local Workers runs (`evidence/r12-wrangler-version.txt`). Nothing was deployed.
 
+## R1.3 QuickBooks Time "My hours", 2026-10-27
+
+Results:
+- API: 69/69 passed (includes QB-01…QB-04).
+- Browser U1–U15: 15/15 passed on Node and 15/15 on local Cloudflare.
+- Workers smoke: 6/6 passed.
+
+What the new tests check:
+- QB-01:
+  - Only GET requests go to rest.tsheets.com, with the token; pages are followed.
+  - The fields are mapped correctly.
+  - A refused token gives a clear message.
+  - No token means no connection.
+- QB-02:
+  - Only full access can link accounts.
+  - A matching name is only a suggestion until someone clicks it.
+  - One QuickBooks Time person per account.
+- QB-03: own hours only, for this week and last week, per day, and whether the person is on the clock.
+- QB-04:
+  - The live Hub without a token shows nothing.
+  - A refused token returns a 502 with an explanation.
+- U15: admin linking, the My hours card, and no card when the account isn't linked.
+
+Not tested against the real QuickBooks Time account yet. That happens when the token is added to the live Hub.
+
 ## R1.3 everyday experience, 2026-10-26
 
 Phone reminder tests PU-01…PU-07 (`tests/push.test.mjs`):
