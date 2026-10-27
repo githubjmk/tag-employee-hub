@@ -12,7 +12,7 @@ self.addEventListener('push', (e) => {
       const r = await fetch('/api/push/pending', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Hub-Request': '1' }, body: JSON.stringify({ endpoint: sub ? sub.endpoint : '' }) });
       if (r.ok) m = await r.json();
     } catch { /* fall back to a generic message */ }
-    if (!m || !m.title) m = { title: 'TAG Employee Hub', body: 'You have an update in the Employee Hub.', url: '/' };
+    if (!m || !m.title) m = { title: 'Employee Hub', body: 'You have an update in the Employee Hub.', url: '/' };
     await self.registration.showNotification(m.title, { body: m.body || '', icon: '/icon-192.png', badge: '/icon-192.png', tag: m.tag || 'tag-hub', data: { url: m.url || '/' } });
   })());
 });

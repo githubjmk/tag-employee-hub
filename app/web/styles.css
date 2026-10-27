@@ -491,3 +491,11 @@ form.one-q .opt input:checked + span { animation: picked .28s ease-out; }
 .install-tip p { margin: 0 0 10px; }
 .install-icon { border-radius: 12px; flex: none; }
 .inline-ic { width: 20px; height: 20px; vertical-align: -4px; margin: 0 2px; }
+
+/* Branding (2026-10-27): Innerspace Cases logo on top, © The Armored Group at the bottom */
+.brand-logo { display: block; height: 38px; width: auto; }
+@media (max-width: 360px) { .brand-logo { height: 32px; } }
+.login-logo { width: min(220px, 70%); }
+.site-footer { margin: 28px 0 8px; padding-top: 14px; border-top: 1px solid var(--line); text-align: center; color: var(--ink-2); font-size: .85rem; }
+.site-footer p { margin: 0; }
+.login .site-footer { max-width: 460px; margin-left: auto; margin-right: auto; }

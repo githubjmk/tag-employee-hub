@@ -1,7 +1,7 @@
 {
-  "name": "TAG Employee Hub",
-  "short_name": "TAG Hub",
-  "description": "Weekly report, safety and company links for The Armored Group.",
+  "name": "Innerspace Employee Hub",
+  "short_name": "Innerspace",
+  "description": "Weekly report, safety and company links for Innerspace Cases (The Armored Group, Inc.).",
   "start_url": "/?source=homescreen",
   "scope": "/",
   "display": "standalone",

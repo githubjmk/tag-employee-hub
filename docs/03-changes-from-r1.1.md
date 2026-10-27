@@ -195,3 +195,9 @@ Added after you sent the paper source: the signed record's heading now matches t
    - No GoTo and no cost. Texting stays v2.0.
 7. **"My weekly reports" card.**
    - This week and last week at a glance: not signed (with the due time), signed (with the time), "waiting for Dana Lead to review", "reviewed by …", or "Dana asked you a question — Answer".
+
+## Branding (owner 2026-10-27)
+- Innerspace Cases logo in the top bar (white logo on navy) and on the sign-in card (navy logo). The logo is taken from innerspacecases.com.
+- Every screen ends with "© <year> The Armored Group, Inc. All rights reserved."
+- The app is named "Innerspace Employee Hub" ("Innerspace" under the home-screen icon), and the app icon uses the Innerspace logo.
+- Authenticator entries keep the name "TAG Employee Hub", so people's existing authenticator codes keep working.

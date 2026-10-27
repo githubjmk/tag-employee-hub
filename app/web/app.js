@@ -4,7 +4,9 @@
 // would refuse anyway.
 import { STR } from './i18n.js';
 import { api, ApiError } from './api.js';
-import { TAG_LOGO } from './logo.js';
+// Branding (owner 2026-10-27): Innerspace Cases logo on top, "© The Armored Group" at the bottom.
+const IS_LOGO_WHITE = '/innerspace-logo-white.png', IS_LOGO_NAVY = '/innerspace-logo-navy.png';
+const copyright = () => html`<footer class="site-footer"><p>© ${new Date().getFullYear()} The Armored Group, Inc. ${t('rights')}</p></footer>`;
 import qrcode from './qr.js';
 import { passkeySupported, platformAvailable, pkHint, setPkHint, offerSkipped, skipOffer, methodName, cancelled, startRegister, finishRegister, passkeySignIn, prepareSignIn, isPhone, deviceGuess } from './passkey.js';
 
@@ -143,7 +145,7 @@ function shell(active, body) {
   return html`
   <a class="skip" href="#main">${t('skip')}</a>
   <header class="topbar">
-    <a class="brand" href="#/home" aria-label="The Armored Group ${t('portal_name')} — ${t('nav_home')}"><span class="logo-plate"><img src="${TAG_LOGO}" alt="The Armored Group" width="600" height="122"></span></a>
+    <a class="brand" href="#/home" aria-label="Innerspace Cases ${t('portal_name')} — ${t('nav_home')}"><img class="brand-logo" src="${IS_LOGO_WHITE}" alt="Innerspace Cases" width="337" height="124"></a>
     ${isDemo() ? html`<span class="demo-badge"><span class="long">${t('demo')}</span><span class="short">DEMO</span></span>` : ''}
     <div class="top-actions">
       <button class="lang" data-act="lang" aria-label="${S.lang === 'en' ? 'Cambiar a español' : 'Switch to English'}">${S.lang === 'en' ? 'ES' : 'EN'}</button>
@@ -153,7 +155,7 @@ function shell(active, body) {
   ${S.me && S.me.sharedDevice ? html`<div class="shared-strip">${icon('lock')} ${t('shared_on')} · ${S.me.employee.name}</div>` : ''}
   <div class="layout">
     <nav class="sidenav" aria-label="Main">${navItems().map(tab)}</nav>
-    <main id="main" tabindex="-1">${body}</main>
+    <main id="main" tabindex="-1">${body}${copyright()}</main>
   </div>
   <nav class="tabbar" aria-label="Main">${bottomItems().map(tab)}</nav>
   <div id="idle" class="idle" hidden role="alertdialog" aria-label="${t('idle_warn')}"><p>${t('idle_warn')} <strong id="idle-count"></strong></p><button class="btn" data-act="stay">${t('stay')}</button></div>`;
@@ -229,7 +231,7 @@ async function loginView(msg) {
   const pkLogin = !roster && passkeySupported() ? (pkHint() || ((await platformAvailable()) ? { id: '', name: '' } : null)) : null;
   root.innerHTML = String(html`
   <main id="main" class="login" tabindex="-1"><div class="login-card">
-    <div class="login-brand logo-top"><img class="login-logo" src="${TAG_LOGO}" alt="The Armored Group" width="600" height="122"><div><p class="eyebrow">${t('portal_name')} · Innerspace Cases</p><h1>${t('appName')}</h1></div></div>
+    <div class="login-brand logo-top"><img class="login-logo" src="${IS_LOGO_NAVY}" alt="Innerspace Cases" width="337" height="124"><div><p class="eyebrow">Innerspace Cases</p><h1>${t('portal_name')}</h1></div></div>
     ${msg ? html`<p class="alert" role="alert">${msg}</p>` : ''}
     ${pkLogin ? html`<button type="button" class="btn primary wide pk-btn" data-act="pk-login">${icon('lock')} ${t('pk_signin')} ${methodName(S.lang)}${pkLogin.name ? html` <small>(${pkLogin.name})</small>` : ''}</button><p class="or-line"><span>${t('pk_or')}</span></p>` : ''}
     <form data-form="login" novalidate>
@@ -253,7 +255,7 @@ async function loginView(msg) {
         <span class="pname">${p.name}</span><span class="prole">${p.id} · ${p.visibleRole === 'management' ? 'Management' : 'Staff'}${p.status !== 'active' ? ' · deactivated' : ''}</span>
         <span class="pcred">${p.pin ? 'PIN ' + p.pin : p.tempPin ? 'Temporary PIN ' + p.tempPin : ''}${p.totp ? ' · code ' + p.totp : ''}</span></button>`)}</div>
     </details>` : ''}
-  </div></main>`);
+  </div>${copyright()}</main>`);
   root.querySelector(msg ? '.alert' : '#main').focus();
   if (S.config.turnstileSiteKey) mountTurnstile(S.config.turnstileSiteKey);
   if (pkLogin) prepareSignIn();
@@ -262,7 +264,7 @@ async function loginView(msg) {
 // One-time setup of the first (owner) account on an empty production database.
 function setupView(msg, result, restart = false) {
   root.innerHTML = String(html`<main id="main" class="login" tabindex="-1"><div class="login-card">
-    <div class="login-brand logo-top"><img class="login-logo" src="${TAG_LOGO}" alt="The Armored Group" width="600" height="122"><div><p class="eyebrow">First-time setup</p><h1>${t('portal_name')}</h1></div></div>
+    <div class="login-brand logo-top"><img class="login-logo" src="${IS_LOGO_NAVY}" alt="Innerspace Cases" width="337" height="124"><div><p class="eyebrow">First-time setup</p><h1>${t('portal_name')}</h1></div></div>
     ${result ? html`<div class="code-box" role="status">${onceWarning()}
         <p><strong>1.</strong> Your employee ID: <strong>${result.employeeId}</strong></p>
         <p><strong>2.</strong> Your temporary PIN (it goes in the PIN box):</p><p class="code-row"><span class="code">${result.tempPin}</span>${copyBtn(result.tempPin)}</p>
@@ -279,7 +281,7 @@ function setupView(msg, result, restart = false) {
         <label class="field"><span>Your name</span><input name="name" maxlength="80" required autocomplete="name"></label>
         <label class="field"><span>Mobile number for urgent safety texts (optional)</span><input name="smsPhone" inputmode="tel" autocomplete="tel"></label>
         <button class="btn primary wide" type="submit">Create my account</button></form>`}
-  </div></main>`);
+  </div>${copyright()}</main>`);
   root.querySelector(msg ? '.alert' : '#main').focus();
 }
 
@@ -342,7 +344,7 @@ function setPinView(msg) {
       <label class="field"><span>${t('setpin_new')}</span><input id="np" name="newPin" type="password" inputmode="numeric" maxlength="12" autocomplete="new-password" required></label>
       <label class="field"><span>${t('setpin_confirm')}</span><input id="cp" name="confirmPin" type="password" inputmode="numeric" maxlength="12" autocomplete="new-password" required></label>
       <button class="btn primary wide" type="submit">${t('setpin_btn')}</button>
-    </form><button class="btn-quiet" data-act="signout">${t('signout')}</button></div></main>`);
+    </form><button class="btn-quiet" data-act="signout">${t('signout')}</button></div>${copyright()}</main>`);
   root.querySelector('h1').setAttribute('tabindex', '-1'); root.querySelector(msg ? '.alert' : 'h1').focus();
 }
 
@@ -367,7 +369,7 @@ async function portalView(msg) {
   const pk = pkHint() && passkeySupported() && !(await rosterOrNull()) ? pkHint() : null;
   render('#/home', html`<div class="portal-public">
     ${msg ? html`<p class="alert" role="alert">${msg}</p>` : ''}
-    <section class="portal-hero"><p class="eyebrow">The Armored Group · ${fmtDate(p.now, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
+    <section class="portal-hero"><p class="eyebrow">Innerspace Cases · ${fmtDate(p.now, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
       <h1>${t('portal_name')}</h1><p class="hero-sub">${t('portal_sub')}</p><span class="gold-rule" aria-hidden="true"></span></section>
     ${pk ? html`<section class="card pk-card"><p class="pk-hello">${t('pk_hello')}, <strong>${pk.name || pk.id}</strong></p>
       <button class="btn primary wide pk-btn" data-act="pk-login">${icon('lock')} ${t('pk_signin')} ${methodName(S.lang)}</button>
@@ -542,7 +544,7 @@ async function homeView() {
     ? html`<div class="big-action waiting">${icon('clock')}<span><strong>${t('report_opens')} ${fmtDT(cur.week.opensAt)}</strong><small>${untilText(cur.week.opensAt, nowS)}</small></span></div>`
     : html`<a class="big-action done" href="#/checkin">${icon('shield')}<span><strong>${cur && cur.state.startsWith('submitted') ? t('home_survey_done') : t('home_survey')}</strong><small>${cur ? chip(cur.state) : ''}</small></span></a>`;
   render('#/home', html`
-    <section class="portal-hero"><p class="eyebrow">TAG ${t('portal_name')} · ${fmtDate(S.me.now, { weekday: 'long', month: 'long', day: 'numeric' })}</p><h1>${t('hello')}, ${h.greetingName}</h1><span class="gold-rule" aria-hidden="true"></span></section>
+    <section class="portal-hero"><p class="eyebrow">Innerspace Cases · ${fmtDate(S.me.now, { weekday: 'long', month: 'long', day: 'numeric' })}</p><h1>${t('hello')}, ${h.greetingName}</h1><span class="gold-rule" aria-hidden="true"></span></section>
     ${todo.length ? html`<section class="card attention"><h2>${t('attention')}</h2><div class="todo-list">${todo}</div></section>` : ''}
     <div class="big-actions">
       ${surveyTile}

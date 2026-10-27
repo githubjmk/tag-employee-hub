@@ -596,7 +596,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     }
     const { cid, challenge } = newChallenge({ purpose: 'register', employeeId: ctx.me.id, rp: ctx.rp });
     return { challengeId: cid, publicKey: {
-      challenge, rp: { id: ctx.rp.rpId, name: 'TAG Employee Hub' },
+      challenge, rp: { id: ctx.rp.rpId, name: 'Innerspace Employee Hub' },
       user: { id: userHandle(ctx.me.id), name: ctx.me.id, displayName: ctx.me.display_name },
       pubKeyCredParams: [{ type: 'public-key', alg: ALG.ES256 }, { type: 'public-key', alg: ALG.RS256 }],
       authenticatorSelection: { authenticatorAttachment: 'platform', residentKey: 'required', requireResidentKey: true, userVerification: 'required' },
@@ -2094,7 +2094,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   A['push.test'] = (ctx) => {
     const subs = livePush(ctx.me.id);
     if (!subs.length) throw bad('Turn on reminders on this phone first.', 'push_none');
-    tx(() => { for (const p of subs) queuePush(p, 'test', 'test:' + nowIso(), 'TAG Employee Hub', 'Reminders work on this phone.', '/'); });
+    tx(() => { for (const p of subs) queuePush(p, 'test', 'test:' + nowIso(), 'Employee Hub', 'Reminders work on this phone.', '/'); });
     return { queued: subs.length };
   };
   A['admin.pushStatus'] = (ctx) => {
