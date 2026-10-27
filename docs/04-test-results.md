@@ -217,3 +217,6 @@ New checks:
   - no card when not connected.
 - Browser: 18/18 on the Node server and 18/18 on local Cloudflare. This includes U17, now as a new iPhone: the new PIN page, the mismatch caught on the phone, Show PIN, letters dropped, then the guide with moving pictures. It also includes U18: linking in Admin → InnerPoints, the card on Home above My weekly reports, and no card for unlinked people.
 - Not tested: real Quickbase data. That needs the live `QB_TOKEN`, which has not been added.
+
+## Management Home (2026-10-27, commit 4d4a206)
+- API: 79/79. Browser: 19/19 on the Node server and 19/19 on local Cloudflare. This includes U19 (managers land on Home, see the Your team card, and reach the dashboard and accounts) and the updated U1.
