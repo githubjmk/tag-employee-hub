@@ -2201,8 +2201,11 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     const on = sheets.find(t => t.onClock);
     return { weekStart: week.start, weekEnd: week.end, totalHours: Math.round(sheets.reduce((a, t) => a + t.seconds, 0) / 36) / 100, days, onClockSince: on ? on.start : null };
   }
+  // Off by default (owner 2026-10-27: staff already see hours in the QuickBooks Time app on their
+  // phones). A full-access manager can switch the card on in Admin → QuickBooks Time.
+  const hoursShown = () => (db.get("SELECT v FROM meta WHERE k='qbt_show_hours'") || {}).v === '1';
   A['hours.mine'] = async (ctx) => {
-    if (!qbt) return { available: false };
+    if (!qbt || !hoursShown()) return { available: false };
     const link = linkOf(ctx.me.id);
     if (!link) return { available: true, linked: false };
     const cur = reportingWeek(now(), tz), prev = prevWeek(cur);
@@ -2214,9 +2217,9 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   A['admin.qbtStatus'] = async (ctx) => {
     if (!has(ctx, 'hr')) throw deny();
     const links = db.get('SELECT COUNT(*) n FROM qbt_links').n;
-    if (!qbt) return { configured: false, links };
-    try { const users = await cached('users', 60 * 60000, () => qbt.users()); return { configured: true, demo: !!qbt.demo, ok: true, users: users.length, links }; }
-    catch (e) { if (e instanceof QbtError) return { configured: true, demo: !!qbt.demo, ok: false, error: e.message, links }; throw e; }
+    if (!qbt) return { configured: false, links, showHours: hoursShown() };
+    try { const users = await cached('users', 60 * 60000, () => qbt.users()); return { configured: true, demo: !!qbt.demo, ok: true, users: users.length, links, showHours: hoursShown() }; }
+    catch (e) { if (e instanceof QbtError) return { configured: true, demo: !!qbt.demo, ok: false, error: e.message, links, showHours: hoursShown() }; throw e; }
   };
   A['admin.qbtUsers'] = async (ctx, { refresh } = {}) => {
     if (!has(ctx, 'hr')) throw deny();
@@ -2231,6 +2234,11 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
       return { id: e.id, name: e.display_name, linkedTo: l ? { id: l.qbt_user_id, name: l.qbt_name } : null, suggestion: sug ? { id: sug.id, name: sug.name } : null };
     });
     return { demo: !!qbt.demo, users: users.map(u => ({ ...u, linkedTo: (links.find(l => l.qbt_user_id === u.id) || {}).employee_id || null })), accounts };
+  };
+  A['admin.qbtShowHours'] = (ctx, { show }) => {
+    if (!has(ctx, 'hr')) throw deny();
+    tx(() => { db.run("INSERT INTO meta (k, v) VALUES ('qbt_show_hours', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", [show ? '1' : '0']); audit(ctx.me.id, show ? 'qbt.hours_shown' : 'qbt.hours_hidden', 'system', 'qbt', {}); });
+    return { showHours: hoursShown() };
   };
   A['admin.qbtLink'] = async (ctx, { employeeId, qbtUserId }) => {
     if (!has(ctx, 'hr')) throw deny('Only a full-access manager can link QuickBooks Time.');

@@ -1,6 +1,8 @@
 # 9. Connecting QuickBooks Time ("My hours"), read-only
 
-**What it does.** Each person sees **My hours** on their Home screen (management under More):
+**Owner decision (2026-10-27):** staff mostly clock in with the QuickBooks Time app on their own phones, so the **My hours card is OFF by default**. A full-access manager can switch it on in Admin → QuickBooks Time. The connection is mainly for behind-the-scenes uses (see "Next").
+
+**What the card does when switched on.** Each person sees **My hours** on their Home screen (management under More):
 - their own clocked hours for this week and last week;
 - hours per day;
 - whether they are on the clock right now.
@@ -34,4 +36,6 @@ Nobody sees anyone else's hours. The Hub only *reads*: every request is a GET to
 - **The token:** only in Cloudflare's secret store.
 
 ## Next (not built yet, needs your OK)
-**Who worked this week, automatically.** Use QuickBooks Time hours to mark weeks with no hours as "not needed", so vacations and leave no longer have to be entered by hand.
+1. **Who worked this week, automatically.** Use QuickBooks Time hours to mark weeks with no hours as "not needed", so vacations and leave no longer have to be entered by hand.
+2. **Missed-punch nudge.** Tell the person (and, optionally, their manager): "You didn't clock out yesterday — tell your supervisor before payroll."
+3. **Proof of paid time.** Note in each signed report whether the person was on the clock while signing.

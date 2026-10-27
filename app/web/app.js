@@ -1323,7 +1323,9 @@ async function adminView(params) {
     const st = await call('admin.qbtStatus', {});
     let list = null;
     if (st.configured && st.ok) list = await call('admin.qbtUsers', { refresh: params.get('refresh') === '1' });
-    body = html`<p class="lede">Read-only: the Hub reads clocked hours so each person sees <strong>My hours</strong> (their own only). Nothing in QuickBooks Time is changed.</p>
+    body = html`<p class="lede">Read-only: the Hub can read clocked hours from QuickBooks Time. Nothing in QuickBooks Time is changed.</p>
+      <section class="card"><h2>“My hours” card for staff: ${st.showHours ? 'ON' : 'OFF'}</h2><p>Shows each person their own clocked hours (not their paycheck). Off by default, because staff already see their hours in the QuickBooks Time app.</p>
+        <button class="btn" data-act="qbt-show" data-on="${st.showHours ? '0' : '1'}">${st.showHours ? 'Hide the My hours card' : 'Show the My hours card'}</button></section>
       <section class="card"><h2>${!st.configured ? 'Not connected' : st.ok ? (st.demo ? 'Sample data (test copy)' : 'Connected') : 'Connection problem'}</h2>
         ${!st.configured ? html`<p>Add the QuickBooks Time access token to the live Hub as the Cloudflare secret <code>QBT_TOKEN</code> (steps in the project docs, 09-quickbooks-time-setup). The test copy never uses the real token.</p>`
           : st.ok ? html`<p>${st.users} QuickBooks Time ${st.users === 1 ? 'person' : 'people'} · ${st.links} linked to Hub accounts.</p>` : html`<p class="alert">${st.error}</p>`}</section>
@@ -1479,6 +1481,7 @@ root.addEventListener('click', async (ev) => {
     return renderReminders();
   }
   if (act === 'push-test') { el.disabled = true; try { await call('push.test', {}); return renderReminders(t('rem_test_sent')); } catch (e) { if (!quiet(e)) { el.disabled = false; announce(errMsg(e)); } } return; }
+  if (act === 'qbt-show') { el.disabled = true; try { await call('admin.qbtShowHours', { show: el.dataset.on === '1' }); return route(); } catch (e) { if (!quiet(e)) { el.disabled = false; announce(errMsg(e)); } } return; }
   if (act === 'push-switch') { el.disabled = true; try { await call('admin.pushSettings', { enabled: el.dataset.on === '1' }); return route(); } catch (e) { if (!quiet(e)) { el.disabled = false; announce(errMsg(e)); } } return; }
   if (act === 'pk-relogin') { setSharedPref(false); await wipe(); return go('#/login'); }
   if (act === 'pk-forget') { setPkHint(null); return portalView(); }

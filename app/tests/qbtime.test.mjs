@@ -42,8 +42,12 @@ before(async () => {
 
 test('QB-02 linking is done by full access only, never automatically; one QuickBooks Time person per account', async () => {
   await signIn('E-104');
+  assert.deepEqual(await call('E-104', 'hours.mine'), { available: false }, 'card is off by default');
+  await signIn('E-101');
+  await call('E-101', 'admin.qbtShowHours', { show: true });
   assert.deepEqual(await call('E-104', 'hours.mine'), { available: true, linked: false });
   await rejects(call('E-104', 'admin.qbtUsers'), 403);
+  await rejects(call('E-104', 'admin.qbtShowHours', { show: false }), 403);
   await signIn('E-102');
   await rejects(call('E-102', 'admin.qbtLink', { employeeId: 'E-104', qbtUserId: '9004' }), 403);
   await signIn('E-101');
@@ -72,7 +76,11 @@ test('QB-03 My hours: own hours only, this week and last week, per day, and whet
   assert.ok(r.thisWeek.onClockSince);
   await signIn('E-105');
   assert.equal((await call('E-105', 'hours.mine')).linked, false, 'nobody sees someone else\'s hours');
+  // Hide the card again: linked people see nothing
+  await call('E-101', 'admin.qbtShowHours', { show: false });
+  assert.deepEqual(await call('E-104', 'hours.mine'), { available: false });
   // Unlink
+  await call('E-101', 'admin.qbtShowHours', { show: true });
   await call('E-101', 'admin.qbtLink', { employeeId: 'E-104', qbtUserId: null });
   assert.equal((await call('E-104', 'hours.mine')).linked, false);
 });
@@ -83,6 +91,7 @@ test('QB-04 the live Hub without a token shows nothing; a refused token shows a 
   const tok = (await s.login({ employeeId: 'E-104', pin: PIN['E-104'] })).token;
   assert.deepEqual(await s.call(tok, 'hours.mine', {}), { available: false });
   const broken = await createHub({ platform: { qbtime: makeQbTime({ fetch: async () => ({ status: 401, json: async () => ({}) }), token: 'old' }) } });
+  broken.db.run("INSERT INTO meta (k, v) VALUES ('qbt_show_hours', '1')");
   broken.db.run("INSERT INTO qbt_links (employee_id, qbt_user_id, qbt_name, linked_by, linked_at) VALUES ('E-104','1','Maria','E-101','2026-10-16')");
   const t2 = (await broken.service.login({ employeeId: 'E-104', pin: PIN['E-104'] })).token;
   await assert.rejects(broken.service.call(t2, 'hours.mine', {}), (e) => e.status === 502 && e.code === 'qbt_auth');
