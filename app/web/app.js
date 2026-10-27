@@ -1164,7 +1164,8 @@ async function renderPkList(note) {
   const box = document.getElementById('pk-list'); if (!box) return;
   let list;
   try { list = await call('passkey.mine', {}); } catch (e) { if (!quiet(e)) box.textContent = errMsg(e); return; }
-  const canAdd = !S.me.sharedDevice && await platformAvailable();
+  // Hidden once this phone is set up for this person (the browser remembers it).
+  const canAdd = !S.me.sharedDevice && !pkReadyFor(S.me.employee.id) && await platformAvailable();
   S.pkReg = null;
   const box2 = document.getElementById('pk-list'); if (!box2) return;
   box2.innerHTML = String(html`${note ? html`<p class="success-inline">${note}</p>` : ''}

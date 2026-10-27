@@ -1,23 +1,11 @@
 {
-  "ranAt": "2026-10-25T11:30:54-0700",
+  "ranAt": "2026-10-26T21:15:54-0700",
   "base": "node server/server.js",
   "results": [
     {
-      "name": "U2 shared tablet: auto sign-out after submit, idle sign-out, nothing private left behind",
-      "ok": true,
-      "ms": 35101,
-      "detail": "auto sign-out + idle sign-out verified"
-    },
-    {
-      "name": "U12 open portal: no sign-in screen; the weekly report asks for the PIN once, at signing; phone remembers the ID; shop tablet shows names",
-      "ok": true,
-      "ms": 14471,
-      "detail": "phone (typed ID, remembered) and shop tablet (name grid) both sign with one PIN entry"
-    },
-    {
       "name": "U13 Face ID: offered after signing with the PIN; portal greets the person and signs in with Face ID; the weekly report is signed with Face ID (no PIN); More lists phones; management removes them",
       "ok": true,
-      "ms": 18117,
+      "ms": 15221,
       "detail": "offer after PIN signing, portal Face ID sign-in, report signed with Face ID (record says passkey), PIN fallback, removal by management"
     }
   ]
