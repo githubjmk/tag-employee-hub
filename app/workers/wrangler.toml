@@ -85,5 +85,6 @@ HUB_DEMO = "0"                 # real clock, empty database, first account throu
 HUB_DEV_RESET = "0"
 HUB_SECURE_COOKIES = "1"
 HUB_PILOT_START_WEEK = "2026-10-12"   # weeks before this are the paper era (never "missing")
+# Optional: QBT_TOKEN (QuickBooks Time access token, read-only use: "My hours").
 # Secrets (set by deploy-live.sh): HUB_PEPPER, HUB_BOOTSTRAP_CODE, and, once the widget lists
 # hub.innerspacecases.com, TURNSTILE_SITE_KEY + TURNSTILE_SECRET.

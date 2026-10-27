@@ -499,3 +499,16 @@ form.one-q .opt input:checked + span { animation: picked .28s ease-out; }
 .site-footer { margin: 28px 0 8px; padding-top: 14px; border-top: 1px solid var(--line); text-align: center; color: var(--ink-2); font-size: .85rem; }
 .site-footer p { margin: 0; }
 .login .site-footer { max-width: 460px; margin-left: auto; margin-right: auto; }
+
+/* My hours (QuickBooks Time, read-only) */
+.my-hours h2 { margin: 0; }
+.hours-total { font-size: 1.6rem; margin: 6px 0 2px; }
+.hours-total .meta { font-size: .9rem; }
+.on-clock { color: var(--ok); font-weight: 650; display: flex; align-items: center; gap: 8px; }
+.on-clock .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); }
+.hours-days { list-style: none; display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; padding: 0; margin: 12px 0 0; }
+.hours-days li { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: .8rem; color: var(--ink-2); }
+.hours-days .bar { width: 70%; height: 56px; background: var(--surface-2); border-radius: 6px; position: relative; overflow: hidden; border: 1px solid var(--line); }
+.hours-days .bar::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: calc(var(--h, 0) * 100%); background: var(--accent); }
+.hours-days b { color: var(--ink); font-size: .85rem; }
+.qbt-row select { max-width: 260px; }

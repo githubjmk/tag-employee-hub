@@ -19,6 +19,7 @@ import { verifyTotp, base32Encode } from './totp.js';
 import { internalRolesFor, describeRoles, permissionsOf } from './permissions.js';
 import { verifyRegistration, verifyAssertion, b64urlEncode, WebAuthnError, ALG } from './webauthn.js';
 import { pushEndpointOk, generateVapidKeys, sendPush } from './webpush.js';
+import { makeDemoQbTime, QbtError } from './qbtime.js';
 
 export class HubError extends Error {
   constructor(status, code, message) { super(message || code); this.status = status; this.code = code; }
@@ -2173,12 +2174,91 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     });
   }
 
+  // ---------------------------------------------------------------- QuickBooks Time, read-only (R1.3)
+  // "My hours": each person sees only their own clocked hours for this week and last week.
+  // Management links each Hub account to its QuickBooks Time user (Admin → QuickBooks Time).
+  // The demo/test copy uses invented sample hours; the real token (QBT_TOKEN) is set only on the
+  // live Hub, so real hours never appear in the test copy.
+  const qbt = 'qbtime' in platform ? platform.qbtime : (cfg.demo ? makeDemoQbTime({ clock, people: () => db.all("SELECT display_name name FROM employees WHERE status='active' ORDER BY id", []) }) : null);
+  const qbtCache = new Map();
+  async function cached(key, ms, fn) {
+    const hit = qbtCache.get(key);
+    if (hit && Date.now() - hit.at < ms) return hit.value;
+    const value = await fn();
+    qbtCache.set(key, { at: Date.now(), value });
+    if (qbtCache.size > 500) qbtCache.delete(qbtCache.keys().next().value);
+    return value;
+  }
+  const qbtFail = (e) => { if (e instanceof QbtError) throw new HubError(502, e.code, e.message); throw e; };
+  const linkOf = (eid) => db.get('SELECT * FROM qbt_links WHERE employee_id=?', [eid]);
+  function summarize(sheets, week) {
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const ymd = addDays(week.start, i);
+      const secs = sheets.filter(t => t.date === ymd).reduce((a, t) => a + t.seconds, 0);
+      days.push({ date: ymd, hours: Math.round(secs / 36) / 100 });
+    }
+    const on = sheets.find(t => t.onClock);
+    return { weekStart: week.start, weekEnd: week.end, totalHours: Math.round(sheets.reduce((a, t) => a + t.seconds, 0) / 36) / 100, days, onClockSince: on ? on.start : null };
+  }
+  A['hours.mine'] = async (ctx) => {
+    if (!qbt) return { available: false };
+    const link = linkOf(ctx.me.id);
+    if (!link) return { available: true, linked: false };
+    const cur = reportingWeek(now(), tz), prev = prevWeek(cur);
+    const key = 'ts:' + link.qbt_user_id + ':' + prev.start + ':' + cur.end;
+    const sheets = await cached(key, 5 * 60000, () => qbt.timesheets({ startDate: prev.start, endDate: cur.end, userIds: [link.qbt_user_id] })).catch(qbtFail);
+    const mine = sheets.filter(t => t.userId === link.qbt_user_id);
+    return { available: true, linked: true, demo: !!qbt.demo, thisWeek: summarize(mine.filter(t => t.date >= cur.start), cur), lastWeek: summarize(mine.filter(t => t.date < cur.start), prev), asOf: nowIso() };
+  };
+  A['admin.qbtStatus'] = async (ctx) => {
+    if (!has(ctx, 'hr')) throw deny();
+    const links = db.get('SELECT COUNT(*) n FROM qbt_links').n;
+    if (!qbt) return { configured: false, links };
+    try { const users = await cached('users', 60 * 60000, () => qbt.users()); return { configured: true, demo: !!qbt.demo, ok: true, users: users.length, links }; }
+    catch (e) { if (e instanceof QbtError) return { configured: true, demo: !!qbt.demo, ok: false, error: e.message, links }; throw e; }
+  };
+  A['admin.qbtUsers'] = async (ctx, { refresh } = {}) => {
+    if (!has(ctx, 'hr')) throw deny();
+    if (!qbt) throw new HubError(409, 'qbt_off', 'QuickBooks Time is not connected.');
+    if (refresh) qbtCache.delete('users');
+    const users = await cached('users', 60 * 60000, () => qbt.users()).catch(qbtFail);
+    const links = db.all('SELECT * FROM qbt_links', []);
+    const accounts = db.all("SELECT id, display_name FROM employees WHERE status='active' ORDER BY display_name", []).map(e => {
+      const l = links.find(x => x.employee_id === e.id);
+      // A name match is only shown as a suggestion; linking always needs a click (no guessing).
+      const sug = !l ? users.find(u => normalizeName(u.name) === normalizeName(e.display_name)) : null;
+      return { id: e.id, name: e.display_name, linkedTo: l ? { id: l.qbt_user_id, name: l.qbt_name } : null, suggestion: sug ? { id: sug.id, name: sug.name } : null };
+    });
+    return { demo: !!qbt.demo, users: users.map(u => ({ ...u, linkedTo: (links.find(l => l.qbt_user_id === u.id) || {}).employee_id || null })), accounts };
+  };
+  A['admin.qbtLink'] = async (ctx, { employeeId, qbtUserId }) => {
+    if (!has(ctx, 'hr')) throw deny('Only a full-access manager can link QuickBooks Time.');
+    const e = emp(employeeId); if (!e) throw notFound();
+    if (!qbtUserId) {
+      tx(() => { db.run('DELETE FROM qbt_links WHERE employee_id=?', [e.id]); audit(ctx.me.id, 'qbt.unlinked', 'employee', e.id, {}); });
+      return { ok: true };
+    }
+    if (!qbt) throw new HubError(409, 'qbt_off', 'QuickBooks Time is not connected.');
+    const users = await cached('users', 60 * 60000, () => qbt.users()).catch(qbtFail);
+    const u = users.find(x => x.id === String(qbtUserId));
+    if (!u) throw bad('That QuickBooks Time person was not found (refresh the list).', 'qbt_user');
+    const other = db.get('SELECT employee_id FROM qbt_links WHERE qbt_user_id=? AND employee_id != ?', [u.id, e.id]);
+    if (other) throw new HubError(409, 'qbt_taken', `That QuickBooks Time person is already linked to ${nameOf(other.employee_id)}.`);
+    tx(() => {
+      db.run('INSERT INTO qbt_links (employee_id, qbt_user_id, qbt_name, linked_by, linked_at) VALUES (?,?,?,?,?) ON CONFLICT(employee_id) DO UPDATE SET qbt_user_id=excluded.qbt_user_id, qbt_name=excluded.qbt_name, linked_by=excluded.linked_by, linked_at=excluded.linked_at',
+        [e.id, u.id, u.name, ctx.me.id, nowIso()]);
+      audit(ctx.me.id, 'qbt.linked', 'employee', e.id, { qbtUserId: u.id });
+    });
+    return { ok: true, linkedTo: { id: u.id, name: u.name } };
+  };
+
   // S5: backup export. A full-access manager downloads a complete copy of the records
   // (everything except sign-in secrets and live sessions) to keep outside Cloudflare.
   // The file carries the audit-chain head and its own SHA-256 so a copy can be checked later.
   const BACKUP_TABLES = ['employees', 'devices', 'esign_consents', 'absences', 'survey_assignments', 'survey_drafts', 'survey_submissions', 'survey_amendments',
     'supervisor_reviews', 'review_events', 'paper_events', 'safety_reports', 'safety_events', 'corrective_actions', 'ca_events', 'attachments', 'notifications',
-    'notification_attempts', 'audit_events', 'passkeys'];
+    'notification_attempts', 'audit_events', 'passkeys', 'qbt_links'];
   const BACKUP_OMIT = { employees: ['pin_salt', 'pin_hash', 'setup_code_hash', 'setup_code_expires', 'setup_code_issued_by', 'totp_secret', 'totp_last_counter', 'failed_logins', 'locked_until', 'lockouts_24h', 'sim_fail_sms'], devices: ['token_hash'], passkeys: ['public_key_jwk', 'credential_id'] };
   A['admin.backupExport'] = (ctx) => {
     if (!has(ctx, 'hr')) throw deny('Only a full-access manager can export a backup.');

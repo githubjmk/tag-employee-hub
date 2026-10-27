@@ -551,10 +551,12 @@ async function homeView() {
       <a class="big-action safety" href="#/safety/new">${icon('alert')}<span><strong>${t('home_safety')}</strong><small>${t('home_safety_sub')}</small></span></a>
     </div>
     ${myWeekCard(h)}
+    <div id="hours-slot"></div>
     ${installTip()}
     ${h.safety.length ? html`<section class="card"><h2>${t('my_reports')}</h2><ul class="plain-list">${h.safety.map(r => html`<li><a href="#/safety/r/${r.id}">${t('t_' + r.type)}</a><span>${sChip(r.status)} <span class="meta">${fmtDate(r.created_at)}</span></span></li>`)}</ul></section>` : ''}
     ${h.links && h.links.length ? html`<h2 class="portal-section-title">${t('links')}</h2><div class="portal-tiles">${h.links.map(l => html`<a class="portal-tile" href="${l.url}" target="_blank" rel="noopener noreferrer">${icon('ext')}<strong>${L(l.label)}</strong><small>${l.note}</small><span class="sr">(${t('opens_new')})</span></a>`)}</div>` : ''}
     ${S.lang === 'es' ? html`<p class="fine">${t('es_draft')}</p>` : ''}`);
+  loadHours();
 }
 // "My weekly reports": this week and last week at a glance, including where the review is.
 function myWeekCard(h) {
@@ -576,6 +578,22 @@ function myWeekCard(h) {
     return html`<li class="week-row ${tone}"><div><p class="week-label">${label} · ${fmtDate(s.week.start)}–${fmtDate(s.week.end)}</p><p class="week-status">${status}${extra}</p></div>${link ? html`<a class="go" href="${link}" aria-label="${t('open')}: ${label}">${t('open')}</a>` : ''}</li>`;
   });
   return rows.length ? html`<section class="card my-week"><h2>${t('week_title')}</h2><ul class="week-list">${rows}</ul><p><a href="#/checkin">${t('home_history')}</a></p></section>` : '';
+}
+// "My hours" from QuickBooks Time (read-only). Loaded after the page so a slow answer never blocks Home.
+const dayShort = (ymd) => new Intl.DateTimeFormat(locale(), { timeZone: 'UTC', weekday: 'short' }).format(new Date(ymd + 'T12:00:00Z'));
+const fmtH = (n) => (Math.round(n * 10) / 10).toLocaleString(locale(), { maximumFractionDigits: 1 }) + ' ' + t('hrs_h');
+function hoursCard(r) {
+  const w = r.thisWeek, max = Math.max(8, ...w.days.map(d => d.hours));
+  return html`<section class="card my-hours"><div class="row between wrap"><h2>${t('hrs_title')}</h2><span class="meta">${r.demo ? t('hrs_demo') : t('hrs_from')}</span></div>
+    <p class="hours-total"><strong>${fmtH(w.totalHours)}</strong> <span class="meta">${t('hrs_this').toLowerCase()} · ${t('hrs_last').toLowerCase()} ${fmtH(r.lastWeek.totalHours)}</span></p>
+    <p class="${w.onClockSince ? 'on-clock' : 'meta'}">${w.onClockSince ? html`<span class="dot" aria-hidden="true"></span> ${t('hrs_on')} ${fmtTime(w.onClockSince)}` : t('hrs_off')}</p>
+    <ol class="hours-days" aria-label="${t('hrs_this')}">${w.days.map(d => html`<li><span class="bar" data-css-h="${Math.min(1, d.hours / max)}" aria-hidden="true"></span><b>${d.hours ? (Math.round(d.hours * 10) / 10) : '–'}</b><span>${dayShort(d.date)}</span></li>`)}</ol></section>`;
+}
+async function loadHours(slotId = 'hours-slot') {
+  const slot = document.getElementById(slotId); if (!slot) return;
+  let r; try { r = await api.call('hours.mine', {}); } catch (e) { const s2 = document.getElementById(slotId); if (s2 && !(e instanceof ApiError && e.status === 401)) s2.innerHTML = String(html`<section class="card my-hours"><h2>${t('hrs_title')}</h2><p class="meta">${t('hrs_err')}</p></section>`); return; }
+  const s2 = document.getElementById(slotId); if (!s2 || !r.available || !r.linked) return;
+  s2.innerHTML = String(hoursCard(r)); applyCssVars(s2);
 }
 const linkCard = (l) => html`<a class="link-card" href="${l.url}" target="_blank" rel="noopener noreferrer"><span>${L(l.label)}</span><small>${l.note}</small>${icon('ext')}<span class="sr">(${t('opens_new')})</span></a>`;
 
@@ -1220,6 +1238,7 @@ function moreView() {
       <dt>${t('esign')}</dt><dd>${m.consent ? m.consent.choice : '—'} <button class="link" data-act="consent-change">${t('edit')}</button></dd>
       <dt>${t('language')}</dt><dd><button class="btn-quiet" data-act="lang">${S.lang === 'en' ? 'Español' : 'English'}</button></dd>
       <dt>Session</dt><dd>${m.sharedDevice ? t('shared_on') : 'Personal device'} · signs out after ${m.idleMinutes} min idle</dd></dl></section>
+    ${isStaff() ? html`<div id="hours-more"></div>` : ''}
     ${!m.deviceId && !window.HUB_LOCAL ? html`<section class="card" id="rem-section"><h2>${t('rem_title')}</h2><p class="hint">${t('rem_help')}</p><div id="rem-box" role="status"><p class="meta">${t('loading')}</p></div></section>` : ''}
     ${passkeySupported() && !m.deviceId ? html`<section class="card" id="pk-section"><h2>${t('pk_section')}</h2><p class="hint">${t('pk_help')}</p><div id="pk-list" role="status"><p class="meta">${t('loading')}</p></div></section>` : ''}
     <section class="card"><details><summary><strong>${t('change_pin')}</strong></summary><form data-form="changepin" novalidate>
@@ -1233,6 +1252,7 @@ function moreView() {
     <button class="btn wide" data-act="signout">${t('signout')}</button>`);
   if (passkeySupported() && !m.deviceId) renderPkList();
   if (!m.deviceId && !window.HUB_LOCAL) renderReminders();
+  if (isStaff()) loadHours('hours-more');
 }
 // Reminders on this phone (web push). The server key is fetched first so the permission prompt
 // opens right on the tap (phones ignore prompts that come after a network wait).
@@ -1276,6 +1296,7 @@ async function adminView(params) {
   if (anyRole('manager', 'hr')) tabs.push(['integrity', 'Integrity']);
   if (can('admin.restore')) tabs.push(['restore', 'Restore & backup']);
   if (can('admin.restore')) tabs.push(['reminders', 'Reminders']);
+  if (can('admin.restore')) tabs.push(['qbt', 'QuickBooks Time']);
   let body = '';
   if (tab === 'versions') {
     const v = await call('survey.versions', {});
@@ -1298,6 +1319,21 @@ async function adminView(params) {
       ${S.me.demo && anyRole('manager', 'hr') ? html`<details><summary>Demo: simulate text failures</summary><form data-form="simfail" class="row wrap" novalidate><select name="employeeId" aria-label="Person">${(await employees()).map(e => html`<option value="${e.id}">${e.name}</option>`)}</select><input name="count" type="number" min="0" max="10" value="4" aria-label="Failures"><button class="btn" type="submit">Set</button></form></details>` : ''}`;
   } else if (tab === 'integrity') {
     body = html`<p>Re-computes every signed record and the audit-log hash chain.</p><button class="btn primary" data-act="verify">Run integrity check</button><div id="verify-out" role="status"></div>`;
+  } else if (tab === 'qbt' && can('admin.restore')) {
+    const st = await call('admin.qbtStatus', {});
+    let list = null;
+    if (st.configured && st.ok) list = await call('admin.qbtUsers', { refresh: params.get('refresh') === '1' });
+    body = html`<p class="lede">Read-only: the Hub reads clocked hours so each person sees <strong>My hours</strong> (their own only). Nothing in QuickBooks Time is changed.</p>
+      <section class="card"><h2>${!st.configured ? 'Not connected' : st.ok ? (st.demo ? 'Sample data (test copy)' : 'Connected') : 'Connection problem'}</h2>
+        ${!st.configured ? html`<p>Add the QuickBooks Time access token to the live Hub as the Cloudflare secret <code>QBT_TOKEN</code> (steps in the project docs, 09-quickbooks-time-setup). The test copy never uses the real token.</p>`
+          : st.ok ? html`<p>${st.users} QuickBooks Time ${st.users === 1 ? 'person' : 'people'} · ${st.links} linked to Hub accounts.</p>` : html`<p class="alert">${st.error}</p>`}</section>
+      ${list ? html`<section class="card"><div class="row between wrap"><h2>Link accounts</h2><a class="btn-quiet" href="#/admin?tab=qbt&refresh=1">Refresh list</a></div>
+        <p class="hint">Pick each person's QuickBooks Time name. A matching name is suggested, but nothing is linked until you choose it.</p>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="QuickBooks Time links"><table class="matrix"><thead><tr><th scope="col">Hub account</th><th scope="col">QuickBooks Time person</th></tr></thead><tbody>
+        ${list.accounts.map(a => html`<tr><td>${a.name} <span class="meta">${a.id}</span></td><td><form data-form="qbtlink" data-id="${a.id}" class="row wrap qbt-row"><select name="qbtUserId" aria-label="QuickBooks Time person for ${a.name}"><option value="">— not linked —</option>
+          ${list.users.filter(u => !u.linkedTo || u.linkedTo === a.id).map(u => html`<option value="${u.id}" ${(a.linkedTo && a.linkedTo.id === u.id) ? raw('selected') : ''}>${u.name}</option>`)}</select>
+          <button class="btn-quiet" type="submit">Save</button>${a.suggestion ? html`<button class="link" type="submit" name="suggest" value="${a.suggestion.id}">Use suggestion: ${a.suggestion.name}</button>` : ''}${a.linkedTo ? html`<span class="success-inline">✓ linked</span>` : ''}</form></td></tr>`)}
+        </tbody></table></div></section>` : ''}`;
   } else if (tab === 'reminders' && can('admin.restore')) {
     const st = await call('admin.pushStatus', {});
     const sent = (k) => st.last14days.filter(x => x.kind === k && ['sent', 'shown'].includes(x.status)).reduce((a, b) => a + b.n, 0);
@@ -1644,6 +1680,11 @@ root.addEventListener('submit', async (ev) => {
     if (kind === 'changepin') { await call('auth.setPin', { currentPin: f.currentPin.value, newPin: f.newPin.value, confirmPin: f.confirmPin.value }); form.reset(); announce('PIN changed'); btn.disabled = false; return; }
     if (kind === 'regdevice') { await call('device.register', { label: f.label.value }); announce('This browser is now a registered shop tablet'); return route(); }
     if (kind === 'revdevice') { await call('device.revoke', { deviceId: form.dataset.id }); return route(); }
+    if (kind === 'qbtlink') {
+      const pick = btn && btn.name === 'suggest' ? btn.value : f.qbtUserId.value;
+      await call('admin.qbtLink', { employeeId: form.dataset.id, qbtUserId: pick || null });
+      announce('Saved'); return route();
+    }
     if (kind === 'pkremoveall') {
       const r = await call('accounts.removePasskeys', { employeeId: form.dataset.id });
       const out = form.closest('article')?.querySelector('.acct-out');

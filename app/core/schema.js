@@ -67,6 +67,15 @@ CREATE TABLE IF NOT EXISTS push_messages (
   UNIQUE (subscription_id, dedupe_key)
 );
 CREATE INDEX IF NOT EXISTS push_messages_status ON push_messages (status);
+-- QuickBooks Time link, R1.3: which QuickBooks Time user each Hub account is (set by management,
+-- never guessed from names). Read-only use: "My hours".
+CREATE TABLE IF NOT EXISTS qbt_links (
+  employee_id TEXT PRIMARY KEY REFERENCES employees(id),
+  qbt_user_id TEXT NOT NULL UNIQUE,
+  qbt_name TEXT NOT NULL,
+  linked_by TEXT NOT NULL,
+  linked_at TEXT NOT NULL
+);
 -- One-time challenges for passkey ceremonies (5 minutes). A verified "sign" challenge becomes a
 -- single-use signing ticket bound to the exact answers that were shown.
 CREATE TABLE IF NOT EXISTS webauthn_challenges (

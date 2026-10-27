@@ -838,6 +838,33 @@ def t_polish(browser, errors):
         return 'translate off, manifest/icons/worker served, install tip + dismiss, My week card, no staff badge, reminders section, admin switch'
 
 
+@test('U15 QuickBooks Time: full access links an account (suggestion needs a click); the person sees My hours on Home (sample hours in the test copy)')
+def t_qbt(browser, errors):
+    with Server() as srv:
+        ctx, pg = new_page(browser, TABLET, errors)
+        login(pg, srv, 'E-101', shared=False)
+        pg.goto(srv.base + '#/admin?tab=qbt'); pg.wait_for_selector('form[data-form=qbtlink][data-id="E-104"]')
+        expect(pg.locator('main')).to_contain_text('Sample data (test copy)')
+        axe(pg, 'admin qbt'); shot(pg, 'u15-01-admin-qbt')
+        pg.click('form[data-form=qbtlink][data-id="E-104"] button[name=suggest]')
+        pg.wait_for_selector('form[data-form=qbtlink][data-id="E-104"] .success-inline')
+        ctx.close()
+        ctx, pg = new_page(browser, PHONE, errors)
+        login(pg, srv, 'E-104', shared=False)
+        pg.goto(srv.base + '#/home'); pg.wait_for_selector('.my-hours')
+        expect(pg.locator('.my-hours')).to_contain_text(re.compile('Sample hours|Horas de muestra'))   # Maria uses Spanish
+        assert pg.locator('.hours-days li').count() == 7
+        axe(pg, 'home my hours'); no_hscroll(pg, 'home my hours'); shot(pg, 'u15-02-my-hours')
+        ctx.close()
+        # Someone not linked sees no hours card.
+        ctx, pg = new_page(browser, PHONE, errors)
+        login(pg, srv, 'E-105', shared=False)
+        pg.goto(srv.base + '#/home'); pg.wait_for_selector('.my-week')
+        pg.wait_for_timeout(500); expect(pg.locator('.my-hours')).to_have_count(0)
+        ctx.close()
+        return 'linking via suggestion, My hours card (7 days, sample label), hidden when not linked'
+
+
 if __name__ == '__main__':
     with sync_playwright() as p:
         browser = p.chromium.launch()
