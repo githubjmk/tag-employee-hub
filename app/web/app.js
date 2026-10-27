@@ -6,7 +6,7 @@ import { STR } from './i18n.js';
 import { api, ApiError } from './api.js';
 import { TAG_LOGO } from './logo.js';
 import qrcode from './qr.js';
-import { passkeySupported, platformAvailable, pkHint, setPkHint, offerSkipped, skipOffer, methodName, cancelled, startRegister, finishRegister, passkeySignIn, prepareSignIn, isPhone } from './passkey.js';
+import { passkeySupported, platformAvailable, pkHint, setPkHint, offerSkipped, skipOffer, methodName, cancelled, startRegister, finishRegister, passkeySignIn, prepareSignIn, isPhone, deviceGuess } from './passkey.js';
 
 const TZ = 'America/Los_Angeles';
 const root = document.getElementById('app');
@@ -39,6 +39,32 @@ const announce = (m) => { live.textContent = ''; setTimeout(() => { live.textCon
 const go = (h) => { if (location.hash === h) route(); else location.hash = h; };
 const mondayOf = (iso) => { const d = new Date(new Date(iso).toLocaleString('en-US', { timeZone: TZ })); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const isDemo = () => !!((S.config && S.config.demo) || (S.pub && S.pub.demo) || (S.me && S.me.demo));
+// "in 2 h 15 min" until a moment, measured against the server's clock.
+function untilText(iso, serverNow) {
+  const ms = new Date(iso) - new Date(serverNow || Date.now());
+  if (!(ms > 0)) return '';
+  const min = Math.round(ms / 60000), h = Math.floor(min / 60), d = Math.floor(h / 24);
+  if (min < 60) return t('in_min').replace('{n}', Math.max(1, min));
+  if (h < 24) return t('in_hm').replace('{h}', h).replace('{m}', min % 60);
+  return d === 1 ? t('in_day') : t('in_days').replace('{d}', d);
+}
+const isStandalone = () => { try { return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; } catch { return false; } };
+const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent || '') || (/Macintosh/.test(navigator.userAgent || '') && navigator.maxTouchPoints > 1);
+let installEvent = null;   // Android/Chrome: the browser's own "install app" prompt, kept for the button
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvent = e; const b = document.querySelector('[data-act=install]'); if (b) b.hidden = false; });
+window.addEventListener('appinstalled', () => { document.querySelector('.install-tip')?.remove(); });
+const installSkipped = () => { try { return Date.now() - Number(localStorage.getItem('hub_install_skip') || 0) < 30 * 86400000; } catch { return false; } };
+const SHARE_ICON = raw('<svg class="ic inline-ic" viewBox="0 0 24 24" aria-label="Share" role="img"><path d="M12 3v12M8 7l4-4 4 4M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>');
+// One-time tip on phones: add the Hub to the home screen so it opens like an app.
+function installTip() {
+  if (!isPhone() || isStandalone() || installSkipped() || S.roster || window.HUB_LOCAL) return '';
+  const chromeIOS = isIOS() && /CriOS/.test(navigator.userAgent);
+  const how = isIOS() ? (chromeIOS ? t('install_ios_chrome') : t('install_ios')) : (installEvent ? t('install_android') : t('install_android_menu'));
+  const [a, b] = how.split('{share}');
+  return html`<section class="card install-tip"><img src="/icon-192.png" alt="" width="56" height="56" class="install-icon"><div class="grow"><h2 class="h3">${t('install_title')}</h2>
+    <p>${a}${b !== undefined ? html`${SHARE_ICON}${b}` : ''}</p>
+    <div class="row wrap">${!isIOS() ? html`<button class="btn primary" data-act="install" ${installEvent ? '' : raw('hidden')}>${t('install_btn')}</button>` : ''}<button class="btn-quiet" data-act="install-later">${t('install_later')}</button></div></div></section>`;
+}
 // Passkey wording for this device ("Face ID", "fingerprint", "Windows Hello").
 const tm = (k) => t(k).replaceAll('{m}', methodName(S.lang));
 // Face ID is offered only on a person's own device: never on a registered shop tablet.
@@ -111,7 +137,8 @@ function navItems() {
 function bottomItems() { return navItems(); }
 
 function shell(active, body) {
-  const unseen = S.me ? S.me.unseenAlerts : 0;
+  // Staff see what needs action on Home, so no count badge for them; management keep it (safety alerts).
+  const unseen = S.me && isStaff() ? S.me.unseenAlerts : 0;
   const tab = ([h, ic, label]) => html`<a href="${h}" class="${active === h ? 'on' : ''}" ${active === h ? raw('aria-current="page"') : ''}>${icon(ic)}<span>${label}</span>${h === '#/more' && unseen ? html`<b class="badge" aria-label="${unseen} unseen">${unseen}</b>` : ''}</a>`;
   return html`
   <a class="skip" href="#main">${t('skip')}</a>
@@ -347,10 +374,11 @@ async function portalView(msg) {
       <p><button type="button" class="link" data-act="pk-forget">${t('pk_forget')}</button></p></section>` : ''}
     <div class="big-actions">
       ${w.openNow ? html`<a class="big-action primary" href="#/r">${icon('check')}<span><strong>${t('home_survey')}</strong><small>${t('week_of')} ${fmtDate(p.week.start)} · ${pk ? tm('portal_survey_sub_pk') : t('portal_survey_sub')}</small></span></a>`
-        : html`<div class="big-action closed">${icon('clock')}<span><strong>${t('home_survey')}</strong><small>${t('closed_title')} · ${t('closed_next')} ${fmtDT(w.nextOpen)}</small></span></div>`}
+        : html`<div class="big-action waiting">${icon('clock')}<span><strong>${t('home_survey')}</strong><small>${t('closed_title')} · ${t('closed_next')} <b>${fmtDT(w.nextOpen)}</b> · ${untilText(w.nextOpen, p.now)}</small></span></div>`}
       <a class="big-action safety" href="#/login?next=safety">${icon('alert')}<span><strong>${t('home_safety')}</strong><small>${t('home_safety_sub')}</small></span></a>
       <a class="big-action" href="#/login?next=checkin">${icon('clock')}<span><strong>${t('home_history')}</strong><small>${t('home_history_sub')}</small></span></a>
     </div>
+    ${installTip()}
     ${p.links.length ? html`<h2 class="portal-section-title">${t('links')}</h2><div class="portal-tiles">${p.links.map(l => html`<a class="portal-tile" href="${l.url}" target="_blank" rel="noopener noreferrer">${icon('ext')}<strong>${L(l.label)}</strong><small>${l.note}</small><span class="sr">(${t('opens_new')})</span></a>`)}</div>` : ''}
     <p class="portal-mgmt"><a href="#/login?next=dash">${icon('lock')} ${t('portal_mgmt')}</a></p>
     ${p.demo ? await demoPeopleNote() : ''}
@@ -505,23 +533,47 @@ async function homeView() {
   const open = h.surveys.slice().reverse().find(x => ['open', 'missing'].includes(x.state));
   const todo = [];
   for (const r of h.reviewItems) todo.push(html`<a class="todo ${r.state === 'clarification_requested' ? 'urgent' : ''}" href="#/record/${r.submissionId}">${icon(r.state === 'clarification_requested' ? 'q' : 'check')}<span><strong>${r.state === 'clarification_requested' ? t('question_from') : t('review_title')}</strong><small>${t('week_of')} ${fmtDate(r.weekId)}</small></span><span class="go">${t('open')}</span></a>`);
+  const nowS = S.me.now;
   const surveyTile = open && !surveyOpen()
-    ? html`<div class="big-action closed">${icon('clock')}<span><strong>${t('home_survey')}</strong><small>${t('closed_title')} · ${t('closed_next')} ${fmtDT(S.me.surveyWindow.nextOpen)}</small></span></div>`
+    ? html`<div class="big-action waiting">${icon('clock')}<span><strong>${t('home_survey')}</strong><small>${t('closed_title')} · ${t('closed_next')} <b>${fmtDT(S.me.surveyWindow.nextOpen)}</b> · ${untilText(S.me.surveyWindow.nextOpen, nowS)}</small></span></div>`
     : open
     ? html`<a class="big-action primary" href="#/checkin/${open.assignmentId}">${icon('check')}<span><strong>${t('home_survey')}</strong><small>${t('week_of')} ${fmtDate(open.week.start)} · ${open.state === 'missing' ? t('st_missing') : t('due') + ' ' + fmtDT(open.week.dueAt)}</small></span></a>`
+    : cur && cur.state === 'not_open'
+    ? html`<div class="big-action waiting">${icon('clock')}<span><strong>${t('report_opens')} ${fmtDT(cur.week.opensAt)}</strong><small>${untilText(cur.week.opensAt, nowS)}</small></span></div>`
     : html`<a class="big-action done" href="#/checkin">${icon('shield')}<span><strong>${cur && cur.state.startsWith('submitted') ? t('home_survey_done') : t('home_survey')}</strong><small>${cur ? chip(cur.state) : ''}</small></span></a>`;
   render('#/home', html`
-    <section class="portal-hero"><p class="eyebrow">TAG ${t('portal_name')} · ${fmtDate(S.me.now, { weekday: 'long', month: 'long', day: 'numeric' })}</p><h1>${t('hello')}, ${h.greetingName}</h1>
-      ${cur ? html`<p class="hero-sub">${t('report_title')}: ${chip(cur.state)}</p>` : ''}<span class="gold-rule" aria-hidden="true"></span></section>
+    <section class="portal-hero"><p class="eyebrow">TAG ${t('portal_name')} · ${fmtDate(S.me.now, { weekday: 'long', month: 'long', day: 'numeric' })}</p><h1>${t('hello')}, ${h.greetingName}</h1><span class="gold-rule" aria-hidden="true"></span></section>
+    ${todo.length ? html`<section class="card attention"><h2>${t('attention')}</h2><div class="todo-list">${todo}</div></section>` : ''}
     <div class="big-actions">
       ${surveyTile}
       <a class="big-action safety" href="#/safety/new">${icon('alert')}<span><strong>${t('home_safety')}</strong><small>${t('home_safety_sub')}</small></span></a>
-      <a class="big-action" href="#/checkin">${icon('clock')}<span><strong>${t('home_history')}</strong><small>${t('home_history_sub')}</small></span></a>
     </div>
-    ${todo.length ? html`<section class="card"><h2>${t('attention')}</h2><div class="todo-list">${todo}</div></section>` : ''}
+    ${myWeekCard(h)}
+    ${installTip()}
     ${h.safety.length ? html`<section class="card"><h2>${t('my_reports')}</h2><ul class="plain-list">${h.safety.map(r => html`<li><a href="#/safety/r/${r.id}">${t('t_' + r.type)}</a><span>${sChip(r.status)} <span class="meta">${fmtDate(r.created_at)}</span></span></li>`)}</ul></section>` : ''}
     ${h.links && h.links.length ? html`<h2 class="portal-section-title">${t('links')}</h2><div class="portal-tiles">${h.links.map(l => html`<a class="portal-tile" href="${l.url}" target="_blank" rel="noopener noreferrer">${icon('ext')}<strong>${L(l.label)}</strong><small>${l.note}</small><span class="sr">(${t('opens_new')})</span></a>`)}</div>` : ''}
     ${S.lang === 'es' ? html`<p class="fine">${t('es_draft')}</p>` : ''}`);
+}
+// "My weekly reports": this week and last week at a glance, including where the review is.
+function myWeekCard(h) {
+  const rows = h.surveys.slice().reverse().map((s, i) => {
+    const label = i === 0 ? t('week_this') : t('week_last');
+    const rv = s.review;
+    let status, extra = '', tone = '';
+    if (['open', 'missing'].includes(s.state)) { status = t('week_not_signed'); extra = html` · ${t('week_due')} ${fmtDT(s.week.dueAt)}`; tone = s.state === 'missing' ? 'bad' : 'warn'; }
+    else if (s.state === 'not_open') { status = t('week_opens'); tone = 'muted'; }
+    else if (s.state === 'excused') { status = t('week_excused'); tone = 'muted'; }
+    else if (s.state === 'paper') { status = t('week_paper'); tone = 'muted'; }
+    else {
+      status = html`${icon('check')} ${t('week_signed')} ${fmtDT(s.signedAt)}`; tone = 'ok';
+      if (rv && rv.state === 'clarification_requested') extra = html`<br><a class="week-q" href="#/record/${s.submissionId}">${icon('q')} ${t('week_question').replace('{n}', (rv.question && rv.question.by) || h.reviewer || '')} — ${t('week_answer')}</a>`;
+      else if (rv && rv.state === 'signed_off') extra = html`<br><span class="meta">${t('week_reviewed').replace('{n}', rv.by || '')}</span>`;
+      else extra = html`<br><span class="meta">${h.reviewer ? t('week_waiting_by').replace('{n}', h.reviewer) : t('week_waiting')}</span>`;
+    }
+    const link = s.submissionId ? '#/record/' + s.submissionId : ['open', 'missing'].includes(s.state) ? '#/checkin/' + s.assignmentId : null;
+    return html`<li class="week-row ${tone}"><div><p class="week-label">${label} · ${fmtDate(s.week.start)}–${fmtDate(s.week.end)}</p><p class="week-status">${status}${extra}</p></div>${link ? html`<a class="go" href="${link}" aria-label="${t('open')}: ${label}">${t('open')}</a>` : ''}</li>`;
+  });
+  return rows.length ? html`<section class="card my-week"><h2>${t('week_title')}</h2><ul class="week-list">${rows}</ul><p><a href="#/checkin">${t('home_history')}</a></p></section>` : '';
 }
 const linkCard = (l) => html`<a class="link-card" href="${l.url}" target="_blank" rel="noopener noreferrer"><span>${L(l.label)}</span><small>${l.note}</small>${icon('ext')}<span class="sr">(${t('opens_new')})</span></a>`;
 
@@ -541,7 +593,21 @@ async function checkinListView() {
 const REVIEW_LABEL = { awaiting_review: 'Waiting for review', clarification_requested: 'Question asked', employee_responded: 'Employee answered', amended_after_signoff: 'Corrected — needs re-review', signed_off: 'Reviewed' };
 const reviewLabel = (s) => REVIEW_LABEL[s] || s || '';
 
-const STEPS = ['performance', 'safety', 'notes', 'sign'];
+// One screen per question (tap an answer and the next one appears); optional write-in questions
+// share one screen; the last screen is review & sign.
+function pagesOf(tpl) {
+  const pages = [];
+  for (const sec of tpl.sections) {
+    let text = null;
+    for (const q of sec.questions) {
+      if (q.type === 'text') { if (!text) { text = { kind: 'text', sec, qs: [] }; pages.push(text); } text.qs.push(q); }
+      else { text = null; pages.push({ kind: 'q', sec, qs: [q] }); }
+    }
+  }
+  pages.push({ kind: 'sign' });
+  return pages;
+}
+const pageOfQuestion = (tpl, qid) => pagesOf(tpl).findIndex(p => p.qs && p.qs.some(q => q.id === qid));
 
 async function surveyView(assignmentId) {
   await refreshMe();
@@ -573,24 +639,27 @@ function saveIndicator() {
 }
 
 function renderSurvey() {
-  const sv = S.survey, tpl = sv.tpl, step = STEPS[sv.step];
-  const progress = html`<div class="progress" role="progressbar" aria-valuemin="1" aria-valuemax="${STEPS.length}" aria-valuenow="${sv.step + 1}" aria-label="${t('step')} ${sv.step + 1} ${t('of')} ${STEPS.length}"><span data-css-p="${(sv.step + 1) / STEPS.length}"></span></div>
-    <div class="row between"><p class="stepper">${t('step')} ${sv.step + 1} ${t('of')} ${STEPS.length}</p>${saveIndicator()}</div>`;
+  const sv = S.survey, tpl = sv.tpl, pages = pagesOf(tpl);
+  sv.step = Math.max(0, Math.min(sv.step, pages.length - 1));
+  const page = pages[sv.step], step = page.kind === 'sign' ? 'sign' : page.sec.id, n = pages.length;
+  const progress = html`<div class="progress" role="progressbar" aria-valuemin="1" aria-valuemax="${n}" aria-valuenow="${sv.step + 1}" aria-label="${t('step')} ${sv.step + 1} ${t('of')} ${n}"><span data-css-p="${(sv.step + 1) / n}"></span></div>
+    <div class="row between"><p class="stepper">${t('step')} ${sv.step + 1} ${t('of')} ${n}</p>${saveIndicator()}</div>`;
   const period = html`<p class="period">${t('week_of')} <strong>${fmtDate(sv.week.start, { weekday: 'short', month: 'short', day: 'numeric' })} – ${fmtDate(sv.week.end, { weekday: 'short', month: 'short', day: 'numeric' })}</strong></p>`;
   let body;
   if (step !== 'sign') {
-    const sec = tpl.sections.find(s => s.id === step);
-    body = html`<h1>${L(sec.title)}</h1>${period}
+    const sec = page.sec;
+    const firstOfSafety = step === 'safety' && pages.findIndex(p => p.sec && p.sec.id === 'safety') === sv.step;
+    body = html`<h1 class="sec-title">${L(sec.title)}</h1>${sv.step === 0 ? period : ''}
       ${sv.step === 0 ? html`<div class="notice paid">${icon('clock')}<p><strong>${t('paid_time')}.</strong> ${L(tpl.paidTimeNotice)}</p></div><p class="intro">${L(tpl.intro)}</p>` : ''}
-      ${step === 'safety' ? html`<a class="safety-cta small" href="#/safety/new">${icon('alert')}<span><strong>${t('safety_now')}</strong><small>${t('safety_now_sub')}</small></span></a>` : ''}
-      <form data-form="survey-step" novalidate>${sec.questions.map(questionField)}</form>`;
+      ${firstOfSafety ? html`<a class="safety-cta small" href="#/safety/new">${icon('alert')}<span><strong>${t('safety_now')}</strong><small>${t('safety_now_sub')}</small></span></a>` : ''}
+      <form data-form="survey-step" class="${page.kind === 'q' ? 'one-q' : ''}" novalidate>${page.qs.map(questionField)}</form>`;
   } else {
     const pkPath = !sv.usePin && (sv.quick ? !!sv.who && !sv.mustSetPin && pkReadyFor(sv.who.id) : !!S.me && pkReadyFor(S.me.employee.id));
     const rows = tpl.sections.map((sec, si) => sec.questions.map(q => {
       const v = sv.answers[q.id];
       const opt = q.options ? q.options.find(o => String(o.value) === String(v)) : null;
       return html`<div class="rv"><dt>${L(q.text)}</dt><dd><span>${v === undefined || v === '' ? html`<em>—</em>` : opt ? html`${q.type === 'rating' ? v + ' · ' : ''}${L(opt)}` : v}</span>
-        <button class="link" data-act="goto-step" data-step="${si}">${t('edit')}</button></dd></div>`;
+        <button class="link" data-act="goto-step" data-step="${pageOfQuestion(tpl, q.id)}">${t('edit')}</button></dd></div>`;
     }));
     body = html`<h1>${t('review_sign')}</h1>${period}<dl class="review card">${rows}</dl>
       <div class="sign-box"><p>${L(pkPath && tpl.signature.statementPasskey ? tpl.signature.statementPasskey : tpl.signature.statement)}</p></div>
@@ -617,9 +686,10 @@ function renderSurvey() {
 function collectStep(validate = true) {
   const form = root.querySelector('form[data-form="survey-step"]');
   if (!form) return true;
-  const sec = S.survey.tpl.sections.find(s => s.id === STEPS[S.survey.step]);
+  const page = pagesOf(S.survey.tpl)[S.survey.step];
+  if (!page || !page.qs) return true;
   let firstBad = null;
-  for (const q of sec.questions) {
+  for (const q of page.qs) {
     if (q.type === 'text') { const v = form.elements[q.id].value.trim(); if (v) S.survey.answers[q.id] = v; else delete S.survey.answers[q.id]; continue; }
     const sel = form.querySelector(`input[name="${q.id}"]:checked`);
     const err = root.querySelector('#err-' + q.id), fs = root.querySelector('#q-' + q.id);
@@ -1148,6 +1218,7 @@ function moreView() {
       <dt>${t('esign')}</dt><dd>${m.consent ? m.consent.choice : '—'} <button class="link" data-act="consent-change">${t('edit')}</button></dd>
       <dt>${t('language')}</dt><dd><button class="btn-quiet" data-act="lang">${S.lang === 'en' ? 'Español' : 'English'}</button></dd>
       <dt>Session</dt><dd>${m.sharedDevice ? t('shared_on') : 'Personal device'} · signs out after ${m.idleMinutes} min idle</dd></dl></section>
+    ${!m.deviceId && !window.HUB_LOCAL ? html`<section class="card" id="rem-section"><h2>${t('rem_title')}</h2><p class="hint">${t('rem_help')}</p><div id="rem-box" role="status"><p class="meta">${t('loading')}</p></div></section>` : ''}
     ${passkeySupported() && !m.deviceId ? html`<section class="card" id="pk-section"><h2>${t('pk_section')}</h2><p class="hint">${t('pk_help')}</p><div id="pk-list" role="status"><p class="meta">${t('loading')}</p></div></section>` : ''}
     <section class="card"><details><summary><strong>${t('change_pin')}</strong></summary><form data-form="changepin" novalidate>
       <label class="field"><span>${t('current_pin')}</span><input name="currentPin" type="password" inputmode="numeric" maxlength="12" autocomplete="current-password" required></label>
@@ -1159,6 +1230,27 @@ function moreView() {
       { label: { en: 'Time clock (QuickBooks Time)', es: 'Reloj (QuickBooks Time)' }, url: 'https://quickbooks.intuit.com/time-tracking/', note: 'Intuit sign-in' }].map(linkCard)}</div></section>
     <button class="btn wide" data-act="signout">${t('signout')}</button>`);
   if (passkeySupported() && !m.deviceId) renderPkList();
+  if (!m.deviceId && !window.HUB_LOCAL) renderReminders();
+}
+// Reminders on this phone (web push). The server key is fetched first so the permission prompt
+// opens right on the tap (phones ignore prompts that come after a network wait).
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+async function currentPushSub() { try { const reg = await navigator.serviceWorker.getRegistration('/'); return reg ? await reg.pushManager.getSubscription() : null; } catch { return null; } }
+async function renderReminders(note) {
+  const box = document.getElementById('rem-box'); if (!box) return;
+  if (S.me.sharedDevice) { box.innerHTML = String(html`<p class="meta">${t('pk_shared_note')}</p>`); return; }
+  if (!pushSupported()) { box.innerHTML = String(html`<p class="meta">${isIOS() && !isStandalone() ? t('rem_need_install') : t('rem_unsupported')}</p>`); return; }
+  let st; try { st = await call('push.status', {}); } catch (e) { if (!quiet(e)) box.textContent = errMsg(e); return; }
+  S.pushKey = st.publicKey;
+  const sub = await currentPushSub();
+  const on = !!sub && st.phones.some(p => sub.endpoint.endsWith(p.endpointTail));
+  const denied = Notification.permission === 'denied';
+  const b2 = document.getElementById('rem-box'); if (!b2) return;
+  b2.innerHTML = String(html`${note ? html`<p class="success-inline">${note}</p>` : ''}
+    ${!st.enabled ? html`<p class="alert-soft">${t('rem_mgmt_off')}</p>` : ''}
+    ${denied ? html`<p class="alert-soft">${t('rem_denied')}</p>` : ''}
+    ${on ? html`<p class="success-inline">${icon('bell')} ${t('rem_is_on')}</p><div class="row wrap"><button class="btn" data-act="push-test">${t('rem_test')}</button><button class="btn-quiet" data-act="push-off">${t('rem_off')}</button></div>`
+      : html`<button class="btn primary" data-act="push-on" ${denied ? raw('disabled') : ''}>${icon('bell')} ${t('rem_on')}</button>`}`);
 }
 async function renderPkList(note) {
   const box = document.getElementById('pk-list'); if (!box) return;
@@ -1181,6 +1273,7 @@ async function adminView(params) {
   if (anyRole('manager', 'hr', 'safety')) tabs.push(['delivery', 'Alert delivery']);
   if (anyRole('manager', 'hr')) tabs.push(['integrity', 'Integrity']);
   if (can('admin.restore')) tabs.push(['restore', 'Restore & backup']);
+  if (can('admin.restore')) tabs.push(['reminders', 'Reminders']);
   let body = '';
   if (tab === 'versions') {
     const v = await call('survey.versions', {});
@@ -1203,6 +1296,16 @@ async function adminView(params) {
       ${S.me.demo && anyRole('manager', 'hr') ? html`<details><summary>Demo: simulate text failures</summary><form data-form="simfail" class="row wrap" novalidate><select name="employeeId" aria-label="Person">${(await employees()).map(e => html`<option value="${e.id}">${e.name}</option>`)}</select><input name="count" type="number" min="0" max="10" value="4" aria-label="Failures"><button class="btn" type="submit">Set</button></form></details>` : ''}`;
   } else if (tab === 'integrity') {
     body = html`<p>Re-computes every signed record and the audit-log hash chain.</p><button class="btn primary" data-act="verify">Run integrity check</button><div id="verify-out" role="status"></div>`;
+  } else if (tab === 'reminders' && can('admin.restore')) {
+    const st = await call('admin.pushStatus', {});
+    const sent = (k) => st.last14days.filter(x => x.kind === k && ['sent', 'shown'].includes(x.status)).reduce((a, b) => a + b.n, 0);
+    body = html`<p class="lede">Phone notifications for the weekly report, instead of text messages. Free; nothing goes through GoTo.</p>
+      <section class="card"><h2>${st.enabled ? 'Reminders are ON' : 'Reminders are OFF'}</h2>
+        <ul><li>Friday when the report opens: “Your weekly report is open”.</li><li>Monday 9:00 AM, only if still not signed: “Your weekly report is due today”.</li><li>Only during work hours (Mon–Fri 7:00 AM–3:30 PM), only to people who turned reminders on, on their own phone. The notification text never contains answers or names.</li></ul>
+        <p>${st.people} ${st.people === 1 ? 'person has' : 'people have'} turned reminders on. Last 14 days: ${sent('report_open')} “open” and ${sent('report_due')} “due today” delivered.</p>
+        ${!st.available ? html`<p class="alert-soft">Sending works only on Cloudflare (not in this copy).</p>` : ''}
+        <button class="btn ${st.enabled ? '' : 'primary'}" data-act="push-switch" data-on="${st.enabled ? '0' : '1'}">${st.enabled ? 'Switch reminders off' : 'Switch reminders on for everyone who opted in'}</button></section>
+      <p class="hint">Each person turns reminders on under More on their phone (on iPhone, after adding the Hub to the home screen). “Send me a test” there works even while reminders are off.</p>`;
   } else if (tab === 'restore' && can('admin.restore')) {
     const st = await call('admin.restoreStatus', {});
     const pad = (n) => String(n).padStart(2, '0');
@@ -1316,6 +1419,29 @@ root.addEventListener('click', async (ev) => {
       return location.hash.startsWith('#/login') ? loginView(msg) : portalView(msg);
     }
   }
+  if (act === 'install') { if (installEvent) { installEvent.prompt(); try { await installEvent.userChoice; } catch { /* ignore */ } installEvent = null; } document.querySelector('.install-tip')?.remove(); return; }
+  if (act === 'install-later') { try { localStorage.setItem('hub_install_skip', String(Date.now())); } catch { /* ignore */ } document.querySelector('.install-tip')?.remove(); return; }
+  if (act === 'push-on') {
+    el.disabled = true;
+    try {
+      const perm = await Notification.requestPermission();   // first, while the tap still counts
+      if (perm !== 'granted') return renderReminders();
+      const reg = await navigator.serviceWorker.register('/sw.js'); await navigator.serviceWorker.ready;
+      const key = S.pushKey || (await api.call('push.status', {})).publicKey;
+      const raw64 = key.replace(/-/g, '+').replace(/_/g, '/'); const keyBytes = Uint8Array.from(atob(raw64 + '==='.slice((raw64.length + 3) % 4)), c => c.charCodeAt(0));
+      const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes });
+      await call('push.subscribe', { endpoint: sub.endpoint, device: deviceGuess() });
+      return renderReminders();
+    } catch (e) { if (quiet(e)) return; el.disabled = false; return renderReminders(errMsg(e)); }
+  }
+  if (act === 'push-off') {
+    el.disabled = true;
+    const sub = await currentPushSub();
+    try { if (sub) { await call('push.unsubscribe', { endpoint: sub.endpoint }); await sub.unsubscribe(); } } catch (e) { if (quiet(e)) return; }
+    return renderReminders();
+  }
+  if (act === 'push-test') { el.disabled = true; try { await call('push.test', {}); return renderReminders(t('rem_test_sent')); } catch (e) { if (!quiet(e)) { el.disabled = false; announce(errMsg(e)); } } return; }
+  if (act === 'push-switch') { el.disabled = true; try { await call('admin.pushSettings', { enabled: el.dataset.on === '1' }); return route(); } catch (e) { if (!quiet(e)) { el.disabled = false; announce(errMsg(e)); } } return; }
   if (act === 'pk-relogin') { setSharedPref(false); await wipe(); return go('#/login'); }
   if (act === 'pk-forget') { setPkHint(null); return portalView(); }
   if (act === 'pk-sign') return pkSignSubmit(el);
@@ -1348,7 +1474,7 @@ root.addEventListener('click', async (ev) => {
   if (act === 'pick') { S.signinId = el.dataset.id; S.signinStep = 'pin'; await loginView(); const f = root.querySelector('#pin'); if (f) f.focus(); return; }
   if (act === 'survey-next') {
     if (!collectStep()) return;
-    scheduleSave(); S.survey.step = Math.min(STEPS.length - 1, S.survey.step + 1); S.survey.error = null; return renderSurvey();
+    scheduleSave(); S.survey.step = Math.min(pagesOf(S.survey.tpl).length - 1, S.survey.step + 1); S.survey.error = null; return renderSurvey();
   }
   if (act === 'survey-back') { collectStep(false); scheduleSave(); S.survey.step = Math.max(0, S.survey.step - 1); return renderSurvey(); }
   if (act === 'goto-step') { S.survey.step = Number(el.dataset.step); return renderSurvey(); }
@@ -1381,6 +1507,20 @@ root.addEventListener('click', async (ev) => {
 
 root.addEventListener('change', (ev) => {
   if (ev.target.closest('form[data-form="survey-step"]')) { collectStep(false); scheduleSave(); }
+});
+// Tapping an answer on a one-question screen moves on by itself (a short pause shows the choice).
+// Only for a real tap or click: keyboard users move between choices with arrows and press Next.
+let advanceTimer = null;
+root.addEventListener('click', (ev) => {
+  const opt = ev.target.closest('form.one-q label.opt');
+  if (!opt || ev.detail === 0 || !S.survey) return;
+  const sv = S.survey, at = sv.step;
+  clearTimeout(advanceTimer);
+  advanceTimer = setTimeout(() => {
+    if (S.survey !== sv || sv.step !== at || !root.querySelector('form.one-q input:checked')) return;
+    collectStep(false); scheduleSave();
+    sv.step = Math.min(pagesOf(sv.tpl).length - 1, sv.step + 1); sv.error = null; renderSurvey();
+  }, 280);
 });
 root.addEventListener('input', (ev) => {
   if (ev.target.closest('form[data-form="survey-step"]') && ev.target.tagName === 'TEXTAREA') { collectStep(false); scheduleSave(); }
@@ -1541,4 +1681,6 @@ root.addEventListener('submit', async (ev) => {
 
 window.addEventListener('hashchange', route);
 window.addEventListener('offline', () => announce(t('offline')));
+// Home-screen app support and reminders (the worker caches nothing).
+if ('serviceWorker' in navigator && !window.HUB_LOCAL && window.isSecureContext) navigator.serviceWorker.register('/sw.js').catch(() => {});
 route();

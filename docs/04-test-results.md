@@ -12,6 +12,23 @@ Every result below comes from the final run on 2026-10-14, after all R1.2 change
 
 Wrangler 4.20.0 was used for the local Workers runs (`evidence/r12-wrangler-version.txt`). Nothing was deployed.
 
+## R1.3 everyday experience, 2026-10-26
+
+Phone reminder tests PU-01…PU-07 (`tests/push.test.mjs`):
+- VAPID keys are made by the Hub, with the private key encrypted at rest.
+- Endpoints are limited to real push services; reminders are refused on shared devices; one entry per phone.
+- Off by default, and only full access can switch them on.
+- Friday "open" goes once per phone and only to people who haven't signed. The request carries no content and is signed with the Hub key; the test verifies that signature.
+- The phone gets the text once, and it is not personal.
+- Monday 9:00 "due today" goes only if last week is still unsigned; nothing outside work hours.
+- A phone that turned notifications off (410) is removed.
+- A test message goes only to the person who asked; deactivation removes their phones.
+- "My week" review data is checked.
+
+Browser tests:
+- U14: translation is off; the manifest, icons and worker are served; the install tip shows and can be dismissed; the My week card shows; there is no staff badge; the reminders section and the Admin switch work.
+- U1–U13 were updated for one question per screen. U5 checks that a keyboard choice never skips ahead.
+
 ## R1.3 Face ID / fingerprint sign-in (passkeys), 2026-10-25
 
 | Suite | Runtime | Result |

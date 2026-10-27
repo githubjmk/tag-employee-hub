@@ -122,10 +122,11 @@ def open_survey(pg):
 
 def fill_survey(pg, pin, *, s1='', s2='', q4='no', keypad=False, comment='PRIVATE-COMMENT'):
     open_survey(pg)
-    pg.click('label.opt:has(input[name=q1][value="4"])'); pg.click('[data-act=survey-next]')
-    pg.wait_for_selector('#q-q2')
-    pg.click('label.opt:has(input[name=q2][value="5"])'); pg.click('label.opt:has(input[name=q3][value=yes])'); pg.click(f'label.opt:has(input[name=q4][value={q4}])')
-    pg.click('[data-act=survey-next]')
+    # One question per screen: tapping an answer moves on by itself.
+    pg.click('label.opt:has(input[name=q1][value="4"])'); pg.wait_for_selector('#q-q2')
+    pg.click('label.opt:has(input[name=q2][value="5"])'); pg.wait_for_selector('#q-q3')
+    pg.click('label.opt:has(input[name=q3][value=yes])'); pg.wait_for_selector('#q-q4')
+    pg.click(f'label.opt:has(input[name=q4][value={q4}])')
     pg.wait_for_selector('textarea[name=s1]')
     if s1: pg.fill('textarea[name=s1]', s1)
     if s2: pg.fill('textarea[name=s2]', s2)
@@ -393,9 +394,11 @@ def t_keyboard(browser, errors):
         choose('q1', 3)
         pg.focus('[data-act=survey-next]'); pg.keyboard.press('Enter')
         pg.wait_for_selector('#q-q2')
-        choose('q2', 4); choose('q3', 'no'); choose('q4', 'no')
-        pg.focus('[data-act=survey-next]'); pg.keyboard.press('Enter')
-        pg.wait_for_selector('textarea[name=s1]')
+        for name, value, nxt in (('q2', 4, '#q-q3'), ('q3', 'no', '#q-q4'), ('q4', 'no', 'textarea[name=s1]')):
+            choose(name, value)                       # keyboard: no automatic jump; Next moves on
+            assert pg.locator(f'input[name={name}]').count(), 'keyboard choice must not skip ahead'
+            pg.focus('[data-act=survey-next]'); pg.keyboard.press('Enter')
+            pg.wait_for_selector(nxt)
         pg.focus('[data-act=survey-next]'); pg.keyboard.press('Enter')
         pg.wait_for_selector('form[data-form=sign]')
         pg.focus('input[name=affirm]'); pg.keyboard.press('Space')
@@ -556,9 +559,9 @@ def t_closed(browser, errors):
         http(srv.base, 'POST', '/api/dev/tick', {'advanceMinutes': 360})      # Friday 10:30 -> 16:30, after the shift
         ctx, pg = new_page(browser, PHONE, errors)
         login(pg, srv, 'E-107', shared=False)
-        pg.wait_for_selector('.big-action.closed')
+        pg.wait_for_selector('.big-action.waiting')
         assert '#/home' in pg.url
-        expect(pg.locator('.big-action.closed')).to_contain_text('Available during work hours')
+        expect(pg.locator('.big-action.waiting')).to_contain_text('Available during work hours'); expect(pg.locator('.big-action.waiting')).to_contain_text(' in ')
         no_hscroll(pg, 'closed home'); axe(pg, 'closed home')
         shot(pg, 'u10-01-after-hours-home')
         pg.goto(srv.base + '#/checkin'); pg.wait_for_selector('main h1')
@@ -608,13 +611,16 @@ def t_restore_backup(browser, errors):
 
 def quick_answer_all(pg):
     """Open-portal report: answer every question with the first option, then go to the sign step."""
-    for _ in range(6):
+    for _ in range(10):
         pg.wait_for_selector('form[data-form=survey-step], form[data-form=qsign]')
         if pg.locator('form[data-form=qsign]').count():
             return
-        for fs in pg.locator('fieldset.q').all():
-            fs.locator('label.opt').last.click()       # last option: lowest rating / "No"
-        pg.click('[data-act=survey-next]')
+        before = pg.inner_text('.stepper')
+        if pg.locator('form.one-q').count():
+            pg.locator('form.one-q label.opt').last.click()   # last option: lowest rating / "No"; moves on by itself
+        else:
+            pg.click('[data-act=survey-next]')
+        pg.wait_for_function('b => (document.querySelector(".stepper") || {}).innerText !== b || !!document.querySelector("form[data-form=qsign]")', arg=before)
     raise AssertionError('did not reach the sign step')
 
 
@@ -792,6 +798,44 @@ def t_passkeys(browser, errors):
         assert pg.evaluate("localStorage.getItem('hub_pk')") is None
         ctx.close()
         return 'offer after PIN signing, portal Face ID sign-in, report signed with Face ID (record says passkey), PIN fallback, removal by management'
+
+
+@test('U14 everyday polish: no browser translation; home-screen tip on phones; My weekly reports card; calmer badges; reminders on More; Admin switch')
+def t_polish(browser, errors):
+    with Server() as srv:
+        # Phone, signed out: the page asks browsers not to machine-translate it; the home-screen tip shows once.
+        ctx, pg = new_page(browser, PHONE, errors, user_agent=IPHONE_UA)
+        pg.goto(srv.base); pg.wait_for_selector('.portal-public')
+        assert pg.evaluate("document.documentElement.getAttribute('translate')") == 'no'
+        assert pg.evaluate("document.querySelector('meta[name=google]').content") == 'notranslate'
+        assert pg.evaluate("document.querySelector('link[rel=manifest]').href").endswith('/manifest.webmanifest')
+        r = pg.request.get(srv.base + 'manifest.webmanifest'); assert r.status == 200 and r.json()['display'] == 'standalone'
+        assert pg.request.get(srv.base + 'icon-192.png').status == 200 and pg.request.get(srv.base + 'sw.js').status == 200
+        pg.wait_for_selector('.install-tip'); expect(pg.locator('.install-tip')).to_contain_text('Add to Home Screen')
+        axe(pg, 'install tip'); shot(pg, 'u14-01-install-tip')
+        pg.click('[data-act=install-later]'); expect(pg.locator('.install-tip')).to_have_count(0)
+        pg.reload(); pg.wait_for_selector('.portal-public'); expect(pg.locator('.install-tip')).to_have_count(0)
+        # Staff home: My weekly reports card, no count badge.
+        login(pg, srv, 'E-106', shared=False)
+        pg.goto(srv.base + '#/home'); pg.wait_for_selector('.my-week')
+        expect(pg.locator('.my-week')).to_contain_text('Signed')
+        expect(pg.locator('.my-week')).to_contain_text('review')
+        expect(pg.locator('.tabbar .badge')).to_have_count(0)
+        axe(pg, 'home my week'); no_hscroll(pg, 'home my week'); shot(pg, 'u14-02-my-week')
+        pg.goto(srv.base + '#/more'); pg.wait_for_selector('#rem-section')
+        expect(pg.locator('#rem-box')).not_to_contain_text('Loading')
+        shot(pg, 'u14-03-reminders')
+        ctx.close()
+        # Full access: Admin → Reminders switch (off by default), management keeps the badge.
+        ctx, pg = new_page(browser, TABLET, errors)
+        login(pg, srv, 'E-101', shared=False)
+        pg.goto(srv.base + '#/admin?tab=reminders'); pg.wait_for_selector('[data-act=push-switch]')
+        expect(pg.locator('main')).to_contain_text('Reminders are OFF')
+        axe(pg, 'admin reminders')
+        pg.click('[data-act=push-switch]'); pg.wait_for_selector('text=Reminders are ON')
+        pg.click('[data-act=push-switch]'); pg.wait_for_selector('text=Reminders are OFF')
+        ctx.close()
+        return 'translate off, manifest/icons/worker served, install tip + dismiss, My week card, no staff badge, reminders section, admin switch'
 
 
 if __name__ == '__main__':

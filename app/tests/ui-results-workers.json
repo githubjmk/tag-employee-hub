@@ -1,44 +1,44 @@
 {
-  "ranAt": "2026-10-25T08:37:45-0700",
+  "ranAt": "2026-10-26T21:59:59-0700",
   "base": "http://127.0.0.1:8787/",
   "results": [
     {
       "name": "U1 end-to-end success flow (shared tablet staff -> management review -> safety -> verification -> employee record)",
       "ok": true,
-      "ms": 12111,
+      "ms": 16313,
       "detail": {
-        "submission": "SUB-6941C20A3C",
-        "tabletSignInToSubmittedSeconds": 2.2
+        "submission": "SUB-E056FC9895",
+        "tabletSignInToSubmittedSeconds": 3.0
       }
     },
     {
       "name": "U2 shared tablet: auto sign-out after submit, idle sign-out, nothing private left behind",
       "ok": true,
-      "ms": 27420,
+      "ms": 32818,
       "detail": "auto sign-out + idle sign-out verified"
     },
     {
       "name": "U3 Spanish employee on a 320px phone: full report, no horizontal scroll, axe clean",
       "ok": true,
-      "ms": 6375,
+      "ms": 11598,
       "detail": "es @320px ok"
     },
     {
       "name": "U4 accessibility: axe on every main screen (light + dark), phone and tablet",
       "ok": true,
-      "ms": 101867,
+      "ms": 105961,
       "detail": "92 screen checks"
     },
     {
       "name": "U5 keyboard only: sign in, complete, sign and submit without a pointer",
       "ok": true,
-      "ms": 3785,
+      "ms": 9626,
       "detail": "keyboard completion ok"
     },
     {
       "name": "U6 network failure during submit keeps the answers; retry is idempotent (one record)",
       "ok": true,
-      "ms": 4798,
+      "ms": 10625,
       "detail": {
         "attempts": 3
       }
@@ -46,34 +46,34 @@
     {
       "name": "U7 temporary PIN first sign-in, PIN change, and wrong-PIN lockout message",
       "ok": true,
-      "ms": 5352,
+      "ms": 10215,
       "detail": "temporary PIN + lockout ok"
     },
     {
       "name": "U8 clarification loop: employee answers the question, management signs off, employee marks it seen",
       "ok": true,
-      "ms": 5862,
+      "ms": 10523,
       "detail": "clarification loop ok"
     },
     {
       "name": "U9 management adds an employee; the new person signs in on a phone with the temporary PIN, sets a PIN and signs the survey",
       "ok": true,
-      "ms": 6124,
+      "ms": 12028,
       "detail": {
         "newEmployeeId": "E-112",
-        "firstSignInToSignedSeconds": 1.4
+        "firstSignInToSignedSeconds": 2.2
       }
     },
     {
       "name": "U10 outside work hours: the weekly report waits for the next shift; safety reports still work",
       "ok": true,
-      "ms": 4377,
+      "ms": 9408,
       "detail": "closed window + safety report ok"
     },
     {
       "name": "U11 full-access manager: Restore & backup page; backup downloads a complete copy without sign-in secrets",
       "ok": true,
-      "ms": 5511,
+      "ms": 10090,
       "detail": {
         "restoreForm": "shown (Cloudflare runtime)",
         "backupSubmissions": 47
@@ -82,14 +82,20 @@
     {
       "name": "U12 open portal: no sign-in screen; the weekly report asks for the PIN once, at signing; phone remembers the ID; shop tablet shows names",
       "ok": true,
-      "ms": 6598,
+      "ms": 13961,
       "detail": "phone (typed ID, remembered) and shop tablet (name grid) both sign with one PIN entry"
     },
     {
       "name": "U13 Face ID: offered after signing with the PIN; portal greets the person and signs in with Face ID; the weekly report is signed with Face ID (no PIN); More lists phones; management removes them",
       "ok": true,
-      "ms": 10744,
+      "ms": 18512,
       "detail": "offer after PIN signing, portal Face ID sign-in, report signed with Face ID (record says passkey), PIN fallback, removal by management"
+    },
+    {
+      "name": "U14 everyday polish: no browser translation; home-screen tip on phones; My weekly reports card; calmer badges; reminders on More; Admin switch",
+      "ok": true,
+      "ms": 10809,
+      "detail": "translate off, manifest/icons/worker served, install tip + dismiss, My week card, no staff badge, reminders section, admin switch"
     }
   ]
 }

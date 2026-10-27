@@ -93,6 +93,12 @@ export function createHttpHandler({ service, secureCookies = false, demo = null,
         return json(200, { turnstileSiteKey: turnstile ? turnstile.siteKey : null, setupNeeded: bs.needed, setupRecoverable: bs.recoverable, demo: !!demo });
       }
       if (p === '/api/public' && req.method === 'GET') return json(200, service.publicInfo());
+      if (p === '/api/push/key' && req.method === 'GET') return json(200, service.pushPublic());
+      if (p === '/api/push/pending' && req.method === 'POST') {
+        if (rateLimited('push:' + clientKey, 120, 60000)) throw new HubError(429, 'rate', 'Too many requests.');
+        const b = await body(req, MAX_BODY);
+        return json(200, await service.pushPending(b.endpoint));
+      }
       if (p === '/api/kiosk/roster' && req.method === 'GET') return json(200, service.kioskRoster(tokenFrom(c, 'hub_device')));
       if (p === '/api/setup/restart' && req.method === 'POST') {
         if (!bootstrapCode) throw new HubError(404, 'not_found', 'Not found');

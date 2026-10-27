@@ -18,6 +18,7 @@ import { getTemplate, TEMPLATES, ASSIGNABLE, SUPERVISOR_ACK, SEEN_STATEMENT, ESI
 import { verifyTotp, base32Encode } from './totp.js';
 import { internalRolesFor, describeRoles, permissionsOf } from './permissions.js';
 import { verifyRegistration, verifyAssertion, b64urlEncode, WebAuthnError, ALG } from './webauthn.js';
+import { pushEndpointOk, generateVapidKeys, sendPush } from './webpush.js';
 
 export class HubError extends Error {
   constructor(status, code, message) { super(message || code); this.status = status; this.code = code; }
@@ -1006,7 +1007,11 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     tx(() => { ensureAssignments(prevWeek(week)); ensureAssignments(week); });
     const surveys = [prevWeek(week), week].map(w => {
       const a = db.get('SELECT * FROM survey_assignments WHERE employee_id=? AND week_id=?', [ctx.me.id, w.weekId]);
-      return a ? { assignmentId: a.id, week: w, ...assignmentState(a, w) } : null;
+      if (!a) return null;
+      const st = assignmentState(a, w);
+      // "My week" card: where the signed report is in review.
+      if (st.submissionId) { const rv = reviewState(st.submissionId); st.review = { state: rv.state, by: rv.lastSignoff ? nameOf(rv.lastSignoff.reviewer_id) : null, at: rv.lastSignoff ? rv.lastSignoff.signed_at : null, question: rv.pendingClarification }; }
+      return { assignmentId: a.id, week: w, ...st };
     }).filter(Boolean);
     const myReviewItems = db.all('SELECT id, assignment_id FROM survey_submissions WHERE employee_id=? ORDER BY signed_at DESC LIMIT 12', [ctx.me.id])
       .map((s, i) => ({ submissionId: s.id, weekId: db.get('SELECT week_id FROM survey_assignments WHERE id=?', [s.assignment_id]).week_id, recent: i < 3, ...reviewState(s.id) }))
@@ -1014,7 +1019,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
       .filter(r => r.state === 'clarification_requested' || (r.recent && r.lastSignoff && !r.employeeSeen));
     const safety = db.all("SELECT id, type, status, created_at FROM safety_reports WHERE reporter_id=? AND (status != 'closed' OR closed_at >= ?) ORDER BY created_at DESC LIMIT 5",
       [ctx.me.id, new Date(now().getTime() - 14 * 86400000).toISOString()]);
-    return { greetingName: ctx.me.display_name.split(' ')[0], surveys, reviewItems: myReviewItems, safety, links: LINKS };
+    return { greetingName: ctx.me.display_name.split(' ')[0], surveys, reviewItems: myReviewItems, safety, links: LINKS, reviewer: nameOf(ctx.me.supervisor_id) };
   };
 
   A['survey.template'] = (ctx, { assignmentId }) => {
@@ -1758,6 +1763,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
         db.run("UPDATE sessions SET revoked_at=?, revoke_reason='separated' WHERE employee_id=? AND revoked_at IS NULL", [nowIso(), e.id]);
         db.run("UPDATE notifications SET status='cancelled' WHERE recipient_id=? AND status IN ('queued','sent')", [e.id]);
         dropPasskeys(e.id, ctx.me.id, 'deactivated');
+        db.run("UPDATE push_subscriptions SET removed_at=?, remove_reason='deactivated' WHERE employee_id=? AND removed_at IS NULL", [nowIso(), e.id]);
       }
       audit(ctx.me.id, 'employee.status', 'employee', e.id, { status, endDate: end, sessionsRevoked: revoked });
     });
@@ -2048,6 +2054,125 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
       .map(e => ({ id: e.id, name: e.display_name, needsCode: isElevated(e) && cfg.elevatedRequireTotp })) };
   }
 
+  // ---------------------------------------------------------------- phone reminders (web push, R1.3)
+  // Off until a full-access manager switches them on (Admin → Reminders). Each person turns them on
+  // per phone. Only during work hours: "your weekly report is open" (Friday) and "due today"
+  // (Monday morning, if still not signed). Pushes carry no content; the phone fetches the text.
+  const PUSH_SUBJECT = 'https://hub.innerspacecases.com';
+  const pushEnabled = () => { try { return (db.get("SELECT v FROM meta WHERE k='push_enabled'") || {}).v === '1'; } catch { return false; } };
+  const metaGet = (k) => { const r = db.get('SELECT v FROM meta WHERE k=?', [k]); return r ? r.v : null; };
+  const metaSet = (k, v) => db.run('INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v', [k, v]);
+  async function ensurePushKeys() {
+    if (metaGet('vapid_public')) return false;
+    const { publicKey, privateJwk } = await generateVapidKeys();
+    const sealed = await crypto.sealSecret(JSON.stringify(privateJwk));
+    tx(() => { if (!metaGet('vapid_public')) { metaSet('vapid_public', publicKey); metaSet('vapid_private', sealed); audit(null, 'push.keys_created', 'system', 'push', {}); } });
+    return true;
+  }
+  function pushPublic() { return { publicKey: metaGet('vapid_public'), enabled: pushEnabled() }; }
+  const livePush = (eid) => db.all('SELECT * FROM push_subscriptions WHERE employee_id=? AND removed_at IS NULL ORDER BY created_at', [eid]);
+  A['push.status'] = (ctx) => ({ ...pushPublic(), phones: livePush(ctx.me.id).map(p => ({ id: p.id, device: p.device, createdAt: p.created_at, endpointTail: p.endpoint.slice(-12) })) });
+  A['push.subscribe'] = (ctx, { endpoint, device }) => {
+    if (ctx.session.device_id || ctx.session.shared_device) throw deny('Reminders are for your own phone, not a shared device.');
+    if (!pushEndpointOk(endpoint)) throw bad('This browser\'s reminder address is not supported.', 'push_endpoint');
+    const n = nowIso(), dev = deviceLabel(device);
+    tx(() => {
+      const old = db.get('SELECT * FROM push_subscriptions WHERE endpoint=?', [endpoint]);
+      if (old && old.employee_id === ctx.me.id && !old.removed_at) return;
+      if (old) db.run('DELETE FROM push_subscriptions WHERE id=?', [old.id]);   // the phone changed hands, or was turned back on
+      db.run('INSERT INTO push_subscriptions (id, employee_id, endpoint, device, created_at) VALUES (?,?,?,?,?)', [id('PS'), ctx.me.id, endpoint, dev, n]);
+      audit(ctx.me.id, 'push.subscribed', 'employee', ctx.me.id, { device: dev });
+    });
+    return A['push.status'](ctx);
+  };
+  A['push.unsubscribe'] = (ctx, { endpoint }) => {
+    const p = db.get('SELECT * FROM push_subscriptions WHERE endpoint=? AND removed_at IS NULL', [String(endpoint || '')]);
+    if (p && p.employee_id === ctx.me.id) tx(() => { db.run("UPDATE push_subscriptions SET removed_at=?, remove_reason='turned_off' WHERE id=?", [nowIso(), p.id]); audit(ctx.me.id, 'push.unsubscribed', 'employee', ctx.me.id, { device: p.device }); });
+    return A['push.status'](ctx);
+  };
+  // "Send me a test": only ever to the person who taps it.
+  A['push.test'] = (ctx) => {
+    const subs = livePush(ctx.me.id);
+    if (!subs.length) throw bad('Turn on reminders on this phone first.', 'push_none');
+    tx(() => { for (const p of subs) queuePush(p, 'test', 'test:' + nowIso(), 'TAG Employee Hub', 'Reminders work on this phone.', '/'); });
+    return { queued: subs.length };
+  };
+  A['admin.pushStatus'] = (ctx) => {
+    if (!has(ctx, 'hr')) throw deny();
+    const people = db.get('SELECT COUNT(DISTINCT employee_id) n FROM push_subscriptions WHERE removed_at IS NULL').n;
+    const last = db.all("SELECT kind, status, COUNT(*) n FROM push_messages WHERE created_at > ? GROUP BY kind, status", [new Date(now().getTime() - 14 * 86400000).toISOString()]);
+    return { enabled: pushEnabled(), people, last14days: last, available: !!platform.fetch };
+  };
+  A['admin.pushSettings'] = (ctx, { enabled }) => {
+    if (!has(ctx, 'hr')) throw deny('Only a full-access manager can switch reminders on or off.');
+    tx(() => { metaSet('push_enabled', enabled ? '1' : '0'); audit(ctx.me.id, enabled ? 'push.enabled' : 'push.disabled', 'system', 'push', {}); });
+    return A['admin.pushStatus'](ctx);
+  };
+  function queuePush(sub, kind, dedupe, title, body, url) {
+    db.run(`INSERT OR IGNORE INTO push_messages (id, subscription_id, employee_id, kind, dedupe_key, title, body, url, status, created_at) VALUES (?,?,?,?,?,?,?,?,'queued',?)`,
+      [id('PM'), sub.id, sub.employee_id, kind, dedupe, title, body, url, nowIso()]);
+  }
+  // The phone asks what to show for a push it just received. Never anything private.
+  function pushPending(endpoint) {
+    return serial(async () => {
+      const sub = typeof endpoint === 'string' && endpoint.length <= 1200 ? db.get('SELECT * FROM push_subscriptions WHERE endpoint=? AND removed_at IS NULL', [endpoint]) : null;
+      if (!sub) return {};
+      const m = db.get("SELECT * FROM push_messages WHERE subscription_id=? AND status='sent' AND sent_at > ? ORDER BY sent_at DESC LIMIT 1", [sub.id, new Date(now().getTime() - 86400000).toISOString()]);
+      if (!m) return {};
+      tx(() => db.run("UPDATE push_messages SET status='shown', shown_at=? WHERE id=?", [nowIso(), m.id]));
+      return { title: m.title, body: m.body, url: m.url, tag: m.kind };
+    });
+  }
+  const es = (eid) => (emp(eid) || {}).preferred_language === 'es';
+  async function pushTick() {
+    return serial(async () => {
+      const out = { queued: 0, sent: 0, failed: 0 };
+      const n = now();
+      if (pushEnabled() && isWithinWorkingHours(n, tz)) {
+        const cur = reportingWeek(n, tz), prev = prevWeek(cur);
+        tx(() => {
+          ensureAssignments(cur);
+          for (const sub of db.all('SELECT * FROM push_subscriptions WHERE removed_at IS NULL', [])) {
+            const e = emp(sub.employee_id);
+            if (!e || e.status !== 'active') continue;
+            const a = db.get("SELECT * FROM survey_assignments WHERE employee_id=? AND week_id=? AND status='open' AND expected=1", [e.id, cur.weekId]);
+            if (a && n.toISOString() >= cur.opensAt && !db.get('SELECT 1 FROM survey_submissions WHERE assignment_id=?', [a.id])) {
+              const before = db.get('SELECT COUNT(*) n FROM push_messages WHERE subscription_id=?', [sub.id]).n;
+              queuePush(sub, 'report_open', 'open:' + cur.weekId, es(e.id) ? 'Su reporte semanal está abierto' : 'Your weekly report is open', es(e.id) ? 'Unos 2 minutos, durante su turno. Toque para llenarlo.' : 'About 2 minutes, during your shift. Tap to fill it in.', '/#/r');
+              out.queued += db.get('SELECT COUNT(*) n FROM push_messages WHERE subscription_id=?', [sub.id]).n - before;
+            }
+            const p = db.get("SELECT * FROM survey_assignments WHERE employee_id=? AND week_id=? AND status='open' AND expected=1", [e.id, prev.weekId]);
+            const monMorning = new Date(new Date(prev.dueAt).getTime() - 6.5 * 3600000).toISOString();   // Monday 09:00
+            if (p && n.toISOString() >= monMorning && n.toISOString() < prev.dueAt && !db.get('SELECT 1 FROM survey_submissions WHERE assignment_id=?', [p.id])) {
+              const before = db.get('SELECT COUNT(*) n FROM push_messages WHERE subscription_id=?', [sub.id]).n;
+              queuePush(sub, 'report_due', 'due:' + prev.weekId, es(e.id) ? 'Su reporte semanal vence hoy' : 'Your weekly report is due today', es(e.id) ? 'Vence hoy a las 3:30 PM. Toque para llenarlo.' : 'Due by 3:30 PM today. Tap to fill it in.', '/#/r');
+              out.queued += db.get('SELECT COUNT(*) n FROM push_messages WHERE subscription_id=?', [sub.id]).n - before;
+            }
+          }
+        });
+      }
+      if (!platform.fetch) return out;
+      const pub = metaGet('vapid_public'), sealed = metaGet('vapid_private');
+      if (!pub || !sealed) return out;
+      const privateJwk = JSON.parse(await crypto.openSecret(sealed));
+      // Tests are sent even while reminders are switched off (they go only to the person who asked).
+      for (const m of db.all("SELECT m.*, s.endpoint FROM push_messages m JOIN push_subscriptions s ON s.id = m.subscription_id WHERE m.status='queued' AND s.removed_at IS NULL ORDER BY m.created_at LIMIT 50", [])) {
+        if (m.kind !== 'test' && !pushEnabled()) continue;
+        const r = await sendPush({ fetch: platform.fetch, endpoint: m.endpoint, publicKey: pub, privateJwk, subject: PUSH_SUBJECT, nowSec: Math.floor(Date.now() / 1000) });
+        tx(() => {
+          if (r.ok) { db.run("UPDATE push_messages SET status='sent', sent_at=?, attempts=attempts+1, detail=? WHERE id=?", [nowIso(), r.detail, m.id]); db.run('UPDATE push_subscriptions SET last_ok_at=? WHERE id=?', [nowIso(), m.subscription_id]); out.sent++; }
+          else {
+            const last = r.gone || m.attempts + 1 >= 3;
+            db.run(`UPDATE push_messages SET status=?, attempts=attempts+1, detail=? WHERE id=?`, [last ? 'failed' : 'queued', r.detail, m.id]);
+            if (r.gone) db.run("UPDATE push_subscriptions SET removed_at=?, remove_reason='gone' WHERE id=?", [nowIso(), m.subscription_id]);
+            if (last) out.failed++;
+          }
+        });
+      }
+      return out;
+    });
+  }
+
   // S5: backup export. A full-access manager downloads a complete copy of the records
   // (everything except sign-in secrets and live sessions) to keep outside Cloudflare.
   // The file carries the audit-chain head and its own SHA-256 so a copy can be checked later.
@@ -2094,7 +2219,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     return n;
   }
 
-  return { call, login, logout, passkeyOptions, passkeyLogin, tick, sealLegacySecrets, recordRestores, publicInfo, kioskRoster, dispatchDue, deliveryReceipt, bootstrap, bootstrapStatus, bootstrapRecover, ensureAssignments, actions: Object.keys(A), config: cfg, _audit: audit, _serial: serial, _weekFor: weekFor };
+  return { call, login, logout, passkeyOptions, passkeyLogin, ensurePushKeys, pushPublic, pushPending, pushTick, tick, sealLegacySecrets, recordRestores, publicInfo, kioskRoster, dispatchDue, deliveryReceipt, bootstrap, bootstrapStatus, bootstrapRecover, ensureAssignments, actions: Object.keys(A), config: cfg, _audit: audit, _serial: serial, _weekFor: weekFor };
 }
 
 export const TYPE_LABEL = {

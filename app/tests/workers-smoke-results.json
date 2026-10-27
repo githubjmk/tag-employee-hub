@@ -1,5 +1,5 @@
 {
-  "ranAt": "2026-10-25T08:33:43-0700",
+  "ranAt": "2026-10-26T22:00:14-0700",
   "results": [
     {
       "name": "W1 security headers on static assets served by the Worker",
@@ -14,7 +14,7 @@
     {
       "name": "W3 sign and submit through the Durable Object; retry is idempotent",
       "ok": true,
-      "detail": "SUB-53D09BF437"
+      "detail": "SUB-CFEE653B68"
     },
     {
       "name": "W4 scheduler tick runs inside the Durable Object",
@@ -31,15 +31,15 @@
       "name": "W5 data, session and demo clock survive a restart of the local runtime",
       "ok": true,
       "detail": {
-        "clockBefore": "2026-10-16T17:30:00.169Z",
-        "clockAfter": "2026-10-16T17:31:01.227Z"
+        "clockBefore": "2026-10-16T17:30:00.208Z",
+        "clockAfter": "2026-10-16T17:31:01.297Z"
       }
     },
     {
       "name": "W6 audit hash chain and signed records verify after restart",
       "ok": true,
       "detail": {
-        "auditEvents": 213,
+        "auditEvents": 214,
         "signedRecordsChecked": 111
       }
     }

@@ -168,3 +168,30 @@ Added after you sent the paper source: the signed record's heading now matches t
 - Notification retry logic.
 - Question wording and version IDs. **Note:** the signature statement inside `WR-1.0` (and `WR-2.0-P`) was edited in place for the new signing steps. Each record stores the exact statement shown, so R1.1 and R1.2 demo records stay distinguishable. Before production, a new version ID for the edited statement is recommended.
 - Paper-form baseline.
+
+## R1.3 everyday experience (owner go-ahead 2026-10-26, "lets GO 1-7")
+
+1. **No browser machine translation.** The page is marked `translate="no"`. The Hub has its own Spanish, and a phone's automatic translation had turned Spanish screens into wrong English ("Yam" for Name), which is a risk on a signing statement.
+2. **Home-screen app.**
+   - Manifest, TAG icons and a service worker that caches nothing.
+   - On phones, a one-time tip explains how to add the Hub to the home screen: the Share button on iPhone, the browser's own install prompt on Android. "Not now" hides it for 30 days.
+3. **One question per screen.**
+   - Tapping an answer moves on after a short pause; keyboard users still use Next.
+   - The optional write-in questions share one screen.
+   - Review & sign lists everything, with a "Change" link per question.
+   - The questions and their wording are unchanged.
+4. **Calmer home.**
+   - Items that need action ("your manager asked a question") come first.
+   - Staff no longer see an alert count on the tab bar; management keep it for safety alerts.
+   - The shared-device strip now says "Shared device — signs out automatically" instead of "Shop tablet".
+5. **Clear waiting state.** Instead of a grey dashed box: "Available during work hours · opens again Tue 7:00 AM · in 9 h 26 min", or "Your weekly report opens Fri 7:00 AM · in 2 days".
+6. **Phone reminders (web push), switched OFF until a full-access manager turns them on** (Admin → Reminders).
+   - What is sent: "Your weekly report is open" on Friday, and "due today" on Monday 9:00 if the report is still not signed. Only during work hours, only to people who turned reminders on for their own phone (More → Reminders). On iPhone the Hub has to be added to the home screen first.
+   - "Send me a test" works even while reminders are off; it only goes to the person who taps it.
+   - Pushes carry no content: the phone fetches the text from the Hub, which never includes answers or names.
+   - The Hub creates its own sending keys at start-up and stores the private one encrypted; nobody handles it.
+   - It only ever sends to Apple, Google, Mozilla or Microsoft push addresses.
+   - Deactivating a person removes their phones.
+   - No GoTo and no cost. Texting stays v2.0.
+7. **"My weekly reports" card.**
+   - This week and last week at a glance: not signed (with the due time), signed (with the time), "waiting for Dana Lead to review", "reviewed by …", or "Dana asked you a question — Answer".

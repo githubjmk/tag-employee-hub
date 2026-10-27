@@ -460,3 +460,34 @@ img.qr { display: block; width: 220px; height: 220px; image-rendering: pixelated
 .pk-alt { text-align: center; margin: 10px 0 0; }
 .or-line { display: flex; align-items: center; gap: 10px; color: var(--ink-2); font-size: .9rem; margin: 14px 0; }
 .or-line::before, .or-line::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+
+/* R1.3 UX: one question per screen, waiting state, My week, install tip */
+@media (min-width: 700px) { .big-actions { grid-template-columns: repeat(2, 1fr); } }
+.big-action.waiting { background: var(--surface); border-color: var(--brand); border-left-width: 6px; }
+.big-action.waiting small b { color: var(--ink); }
+.sec-title { margin: 6px 0 4px; font-size: .85rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); }
+form.one-q .q { border: 0; margin: 8px 0 0; padding: 0; }
+form.one-q .q legend { font-size: 1.45rem; line-height: 1.3; font-weight: 750; margin-bottom: 18px; }
+form.one-q .opt span { min-height: 66px; font-size: 1.1rem; }
+form.one-q .opts.yesno .opt span { min-height: 84px; font-size: 1.3rem; }
+form.one-q .opt input:checked + span { animation: picked .28s ease-out; }
+@keyframes picked { from { transform: scale(.97); } to { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { form.one-q .opt input:checked + span { animation: none; } }
+.card.attention { border-left: 4px solid var(--safety); }
+.my-week h2 { margin-top: 0; }
+.week-list { list-style: none; margin: 0 0 8px; padding: 0; }
+.week-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0 12px 12px; border-bottom: 1px solid var(--line); border-left: 4px solid var(--line); margin-bottom: 6px; }
+.week-row.ok { border-left-color: var(--ok); }
+.week-row.warn { border-left-color: var(--gold); }
+.week-row.bad { border-left-color: var(--danger); }
+.week-row p { margin: 0; }
+.week-label { font-size: .85rem; color: var(--ink-2); font-weight: 650; text-transform: uppercase; letter-spacing: .03em; }
+.week-status { font-weight: 650; }
+.week-status .ic { width: 18px; height: 18px; vertical-align: -3px; color: var(--ok); }
+.week-row .go { white-space: nowrap; font-weight: 650; }
+.week-q { font-weight: 700; color: var(--safety); }
+.install-tip { display: flex; gap: 14px; align-items: flex-start; border: 2px solid var(--brand); }
+.install-tip h2 { margin: 0 0 4px; }
+.install-tip p { margin: 0 0 10px; }
+.install-icon { border-radius: 12px; flex: none; }
+.inline-ic { width: 20px; height: 20px; vertical-align: -4px; margin: 0 2px; }

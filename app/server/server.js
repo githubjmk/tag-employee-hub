@@ -14,20 +14,21 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = join(HERE, '..', 'web');
 const DEMO_PEPPER = 'demo-pepper-not-secret-0001';
 
-export async function createHub({ demoNow = process.env.HUB_DEMO_NOW || DEMO_NOW, config = {}, autoTick = false, senders = {} } = {}) {
+export async function createHub({ demoNow = process.env.HUB_DEMO_NOW || DEMO_NOW, config = {}, autoTick = false, senders = {}, platform = {} } = {}) {
   const db = nodeDb();
   const clock = switchableClock();
   const crypto = makeCrypto({ pepper: process.env.HUB_PEPPER || DEMO_PEPPER });
-  const service = createService({ db, crypto, clock, senders, config: { demo: true, pilotStartWeek: PILOT_START_WEEK, ...config } });
+  const service = createService({ db, crypto, clock, senders, platform, config: { demo: true, pilotStartWeek: PILOT_START_WEEK, ...config } });
   await seed({ db, crypto, clock, service });
   await service.sealLegacySecrets();
+  await service.ensurePushKeys();
   clock.runFrom(demoNow === 'real' ? new Date() : demoNow);
   let timer = null;
   if (autoTick) timer = setInterval(() => service.tick().catch(e => console.error('[hub] tick failed:', e.message)), 15000);
   return { db, clock, crypto, service, stop: () => clearInterval(timer) };
 }
 
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json', '.png': 'image/png' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
 
 export function createServer(hubRef, { secureCookies = false, devReset = false } = {}) {
   const current = () => hubRef.hub;

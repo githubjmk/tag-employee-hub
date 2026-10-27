@@ -37,6 +37,36 @@ CREATE TABLE IF NOT EXISTS passkey_sessions (
   token_hash TEXT PRIMARY KEY,
   passkey_id TEXT NOT NULL
 );
+-- Phone reminders (web push), R1.3. A phone that turned reminders on; pushes carry no content.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id TEXT PRIMARY KEY,
+  employee_id TEXT NOT NULL REFERENCES employees(id),
+  endpoint TEXT NOT NULL UNIQUE,       -- the phone's push address (Apple/Google), not secret content
+  device TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_ok_at TEXT,
+  removed_at TEXT,
+  remove_reason TEXT
+);
+-- What a reminder says. The phone fetches the text after the content-free push arrives.
+CREATE TABLE IF NOT EXISTS push_messages (
+  id TEXT PRIMARY KEY,
+  subscription_id TEXT NOT NULL,
+  employee_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  url TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('queued','sent','failed','shown')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  sent_at TEXT,
+  shown_at TEXT,
+  detail TEXT,
+  UNIQUE (subscription_id, dedupe_key)
+);
+CREATE INDEX IF NOT EXISTS push_messages_status ON push_messages (status);
 -- One-time challenges for passkey ceremonies (5 minutes). A verified "sign" challenge becomes a
 -- single-use signing ticket bound to the exact answers that were shown.
 CREATE TABLE IF NOT EXISTS webauthn_challenges (

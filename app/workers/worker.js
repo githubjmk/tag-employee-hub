@@ -41,7 +41,7 @@ export class Hub extends DurableObject {
     // Point-in-time restore (see core/service.js). The restore log lives in its own Durable
     // Object so it survives the restore of this one.
     const logStub = () => env.RESTORE_LOG.get(env.RESTORE_LOG.idFromName('tag-hub-restore-log'));
-    const platform = env.RESTORE_LOG ? { restore: {
+    const platform = env.RESTORE_LOG ? { fetch: (...a) => fetch(...a), restore: {
       log: () => logStub().list(),
       schedule: async (entry) => {
         const st = this.ctx.storage;
@@ -53,7 +53,7 @@ export class Hub extends DurableObject {
         this.restartPending = true;
         return { bookmark, undoBookmark };
       }
-    } } : {};
+    } } : { fetch: (...a) => fetch(...a) };
     const service = createService({ db, crypto, clock, senders, platform, config: { demo, pilotStartWeek: demo ? PILOT_START_WEEK : (env.HUB_PILOT_START_WEEK || null) } });
     const seeded = (() => { try { return !!db.get("SELECT v FROM meta WHERE k='seeded'"); } catch { return false; } })();
     if (!seeded) {
@@ -66,6 +66,7 @@ export class Hub extends DurableObject {
       db.run("INSERT INTO meta (k, v) VALUES ('seeded', ?)", [demo ? 'demo ' + new Date().toISOString() : 'empty ' + new Date().toISOString()]);
     } else if (demo && !clock.resume()) clock.runFrom(env.HUB_DEMO_NOW || DEMO_NOW);
     db.exec(UPGRADES);                       // tables added since go-live (idempotent)
+    try { await service.ensurePushKeys(); } catch (e) { console.error('push keys not created', e && e.message); }
     await service.sealLegacySecrets();      // S4: authenticator secrets encrypted at rest
     try { await service.recordRestores(); } catch (e) { console.error('restore log not recorded yet', e); }
     this.hub = { db, clock, crypto, service };
@@ -99,7 +100,7 @@ export class Hub extends DurableObject {
   // Scheduler: reminders, escalations and notification retries.
   async alarm() {
     await this.ready;
-    try { await this.hub.service.tick(); }
+    try { await this.hub.service.tick(); await this.hub.service.pushTick(); }
     finally { await this.ctx.storage.setAlarm(Date.now() + TICK_MS); }
   }
 }
