@@ -1,18 +1,12 @@
 {
-  "ranAt": "2026-10-27T11:06:48-0700",
+  "ranAt": "2026-10-27T13:52:06-0700",
   "base": "node server/server.js",
   "results": [
     {
-      "name": "U14 everyday polish: no browser translation; home-screen tip on phones; My weekly reports card; calmer badges; reminders on More; Admin switch",
+      "name": "U16 guided phone setup: Home card -> home-screen step (moving picture) -> Face ID step (PIN, then approve) -> reminders step -> all set",
       "ok": true,
-      "ms": 7563,
-      "detail": "translate off, manifest/icons/worker served, install tip + dismiss, My week card, no staff badge, reminders section, admin switch"
-    },
-    {
-      "name": "U15 QuickBooks Time: full access links an account (suggestion needs a click); the person sees My hours on Home (sample hours in the test copy)",
-      "ok": true,
-      "ms": 7458,
-      "detail": "linking via suggestion, My hours card (7 days, sample label), hidden when not linked"
+      "ms": 7491,
+      "detail": "card -> 3 steps with moving pictures -> Face ID set up inside the guide -> all set; card gone afterwards"
     }
   ]
 }

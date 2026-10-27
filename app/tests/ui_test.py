@@ -868,6 +868,40 @@ def t_qbt(browser, errors):
         return 'linking via suggestion, My hours card (7 days, sample label), hidden when not linked'
 
 
+@test('U16 guided phone setup: Home card -> home-screen step (moving picture) -> Face ID step (PIN, then approve) -> reminders step -> all set')
+def t_guide(browser, errors):
+    with Server() as srv0:
+        if EXTERNAL and '127.0.0.1' not in srv0.base and 'localhost' not in srv0.base:
+            return 'skipped: needs a local server'
+        srv = LocalhostView(srv0)
+        ctx, pg = new_page(browser, PHONE, errors, user_agent=IPHONE_UA)
+        virtual_authenticator(ctx, pg)
+        maria = srv.person('E-104')
+        login(pg, srv, 'E-104', shared=False)
+        pg.goto(srv.base + '#/home'); pg.wait_for_selector('.guide-card')
+        shot(pg, 'u16-00-home-card')
+        pg.click('.guide-card a.btn.primary')
+        pg.wait_for_selector('.demo-phone.ios')
+        expect(pg.locator('.guide .stepper')).to_contain_text('1')
+        axe(pg, 'guide home step'); no_hscroll(pg, 'guide home step'); shot(pg, 'u16-01-home-step')
+        pg.click('[data-act=gs-next]')
+        pg.wait_for_selector('.demo-phone.face')
+        axe(pg, 'guide faceid step'); shot(pg, 'u16-02-face-step')
+        pg.fill('#pk-setup input[name=signPin]', maria['pin']); pg.click('#pk-setup form button[type=submit]')
+        pg.click('#pk-setup [data-act=pk-create]')
+        pg.wait_for_selector('.demo-phone.bell')
+        axe(pg, 'guide reminders step'); shot(pg, 'u16-03-remind-step')
+        pg.click('[data-act=gs-skip]')
+        pg.wait_for_selector('.guide-done')
+        expect(pg.locator('.guide-check')).to_contain_text('✓')
+        shot(pg, 'u16-04-done')
+        pg.click('[data-act=gs-finish]'); pg.wait_for_selector('.my-week')
+        expect(pg.locator('.guide-card')).to_have_count(0)
+        assert json.loads(pg.evaluate("localStorage.getItem('hub_pk')"))['id'] == 'E-104'
+        ctx.close()
+        return 'card -> 3 steps with moving pictures -> Face ID set up inside the guide -> all set; card gone afterwards'
+
+
 if __name__ == '__main__':
     with sync_playwright() as p:
         browser = p.chromium.launch()

@@ -546,17 +546,17 @@ async function homeView() {
   render('#/home', html`
     <section class="portal-hero"><p class="eyebrow">Innerspace Cases · ${fmtDate(S.me.now, { weekday: 'long', month: 'long', day: 'numeric' })}</p><h1>${t('hello')}, ${h.greetingName}</h1><span class="gold-rule" aria-hidden="true"></span></section>
     ${todo.length ? html`<section class="card attention"><h2>${t('attention')}</h2><div class="todo-list">${todo}</div></section>` : ''}
+    <div id="guide-slot"></div>
     <div class="big-actions">
       ${surveyTile}
       <a class="big-action safety" href="#/safety/new">${icon('alert')}<span><strong>${t('home_safety')}</strong><small>${t('home_safety_sub')}</small></span></a>
     </div>
     ${myWeekCard(h)}
     <div id="hours-slot"></div>
-    ${installTip()}
     ${h.safety.length ? html`<section class="card"><h2>${t('my_reports')}</h2><ul class="plain-list">${h.safety.map(r => html`<li><a href="#/safety/r/${r.id}">${t('t_' + r.type)}</a><span>${sChip(r.status)} <span class="meta">${fmtDate(r.created_at)}</span></span></li>`)}</ul></section>` : ''}
     ${h.links && h.links.length ? html`<h2 class="portal-section-title">${t('links')}</h2><div class="portal-tiles">${h.links.map(l => html`<a class="portal-tile" href="${l.url}" target="_blank" rel="noopener noreferrer">${icon('ext')}<strong>${L(l.label)}</strong><small>${l.note}</small><span class="sr">(${t('opens_new')})</span></a>`)}</div>` : ''}
     ${S.lang === 'es' ? html`<p class="fine">${t('es_draft')}</p>` : ''}`);
-  loadHours();
+  loadHours(); guideCard();
 }
 // "My weekly reports": this week and last week at a glance, including where the review is.
 function myWeekCard(h) {
@@ -1230,6 +1230,7 @@ function moreView() {
     <div class="stack">
       ${isStaff() ? html`<a class="card row link-row" href="#/checkin">${icon('check')}<span class="grow">My weekly survey and previous surveys</span></a>
         <a class="card row link-row" href="#/actions">${icon('wrench')}<span class="grow">All corrective actions</span></a>` : ''}
+      ${!m.deviceId ? html`<a class="card row link-row" href="#/getstarted">${icon('check')}<span class="grow">${t('gs_card_t')}</span></a>` : ''}
       <a class="card row link-row" href="#/alerts">${icon('bell')}<span class="grow">${t('alerts_title')}</span>${unseen ? html`<b class="badge">${unseen}</b>` : ''}</a>
       ${!isStaff() ? html`<a class="card row link-row" href="#/safety">${icon('alert')}<span class="grow">${t('my_reports')}</span></a>` : ''}
       ${can('admin.delivery') || can('admin.integrity') ? html`<a class="card row link-row" href="#/admin">${icon('lock')}<span class="grow">Admin: questionnaire versions, alert delivery, integrity check</span></a>` : ''}
@@ -1258,6 +1259,93 @@ function moreView() {
 // opens right on the tap (phones ignore prompts that come after a network wait).
 const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 async function currentPushSub() { try { const reg = await navigator.serviceWorker.getRegistration('/'); return reg ? await reg.pushManager.getSubscription() : null; } catch { return null; } }
+// Turn on reminders on this phone. Asks the phone first (while the tap still counts).
+async function enablePush() {
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') return false;
+  const reg = await navigator.serviceWorker.register('/sw.js'); await navigator.serviceWorker.ready;
+  const key = S.pushKey || (await api.call('push.status', {})).publicKey;
+  const raw64 = key.replace(/-/g, '+').replace(/_/g, '/'); const keyBytes = Uint8Array.from(atob(raw64 + '==='.slice((raw64.length + 3) % 4)), c => c.charCodeAt(0));
+  const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes });
+  await call('push.subscribe', { endpoint: sub.endpoint, device: deviceGuess() });
+  return true;
+}
+
+// ---------------------------------------------------------------- guided phone setup (owner 2026-10-27)
+// "Set up this phone" in three short steps, each with a moving picture of exactly what to tap:
+// 1) put the Hub on the home screen, 2) Face ID, 3) reminders. Steps already done are skipped.
+async function guideSteps() {
+  const steps = [];
+  if (isPhone() && !isStandalone() && !S.me.deviceId) steps.push('home');
+  if (passkeySupported() && !S.me.sharedDevice && !S.me.deviceId && !pkReadyFor(S.me.employee.id) && await platformAvailable()) steps.push('faceid');
+  if (!S.me.sharedDevice && !S.me.deviceId && pushSupported() && Notification.permission !== 'denied') {
+    let on = false;
+    try { const st = await api.call('push.status', {}); S.pushKey = st.publicKey; const sub = await currentPushSub(); on = !!sub && st.phones.some(p => sub.endpoint.endsWith(p.endpointTail)); } catch { /* ignore */ }
+    if (!on) steps.push('remind');
+  } else if (!S.me.deviceId && isIOS() && !isStandalone()) steps.push('remind');   // explains: add to home screen first
+  return steps;
+}
+const PHONE_SVG = {
+  // iPhone Safari: the Share button pulses, then the share sheet slides up with "Add to Home Screen" highlighted.
+  ios: raw(`<div class="demo-phone ios" aria-hidden="true"><div class="dp-screen"><div class="dp-site"><span class="dp-logo"></span><span class="dp-line"></span><span class="dp-line short"></span></div>
+    <div class="dp-bar"><span class="dp-ic">‹</span><span class="dp-ic">›</span><span class="dp-share"><svg viewBox="0 0 24 24"><path d="M12 3v12M8 7l4-4 4 4M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="dp-ic">▢</span><span class="dp-ic">▣</span></div>
+    <div class="dp-sheet"><div class="dp-row">Copy</div><div class="dp-row">Add to Reading List</div><div class="dp-row hl">Add to Home Screen <b>＋</b></div><div class="dp-row">Find on Page</div></div>
+    <span class="dp-tap"></span></div></div>`),
+  android: raw(`<div class="demo-phone android" aria-hidden="true"><div class="dp-screen"><div class="dp-top"><span class="dp-url"></span><span class="dp-menu">⋮</span></div><div class="dp-site"><span class="dp-logo"></span><span class="dp-line"></span><span class="dp-line short"></span></div>
+    <div class="dp-dropdown"><div class="dp-row">New tab</div><div class="dp-row">Bookmarks</div><div class="dp-row hl">Add to Home screen</div><div class="dp-row">Settings</div></div><span class="dp-tap"></span></div></div>`),
+  face: raw(`<div class="demo-phone face" aria-hidden="true"><div class="dp-screen dp-center"><div class="dp-face"><span class="c tl"></span><span class="c tr"></span><span class="c bl"></span><span class="c br"></span><span class="dp-smile">☺</span><span class="dp-scan"></span></div><div class="dp-ok">✓</div></div></div>`),
+  bell: raw(`<div class="demo-phone bell" aria-hidden="true"><div class="dp-screen"><div class="dp-note"><span class="dp-note-ic"></span><span><b>Employee Hub</b><br>Your weekly report is open</span></div><div class="dp-clock">7:00</div></div></div>`)
+};
+async function guideView(force, note) {
+  if (!S.guide) S.guide = { skipped: new Set(), done: new Set() };
+  const g = S.guide;
+  const all = await guideSteps();
+  const left = all.filter(x => !g.skipped.has(x) && !g.done.has(x));
+  const step = force || left[0] || 'done';
+  const order = ['home', 'faceid', 'remind'].filter(x => all.includes(x) || g.skipped.has(x) || g.done.has(x));
+  g.current = step; g.prev = order[order.indexOf(step) - 1] || null;
+  const n = order.indexOf(step) + 1, total = order.length;
+  const dots = total ? html`<ol class="guide-dots" aria-label="${t('gs_progress')}">${order.map((x, i) => html`<li class="${x === step ? 'on' : (g.done.has(x) ? 'ok' : '')}" aria-current="${x === step ? 'step' : 'false'}"><span class="sr">${t('step')} ${i + 1}</span></li>`)}</ol>` : '';
+  let body;
+  if (step === 'home') {
+    const ios = isIOS(), chromeIOS = ios && /CriOS/.test(navigator.userAgent);
+    body = html`<h1>${t('gs_home_t')}</h1><p class="lede">${t('gs_home_why')}</p>${ios ? PHONE_SVG.ios : PHONE_SVG.android}
+      <ol class="guide-steps">${ios ? html`<li>${chromeIOS ? t('gs_ios_1c') : t('gs_ios_1')}</li><li>${t('gs_ios_2')}</li><li>${t('gs_ios_3')}</li>`
+        : html`<li>${t('gs_and_1')}</li><li>${t('gs_and_2')}</li><li>${t('gs_and_3')}</li>`}</ol>
+      ${!ios && installEvent ? html`<button class="btn primary wide" data-act="gs-install">${t('install_btn')}</button>` : html`<p class="hint">${t('gs_home_after')}</p>`}
+      <div class="guide-nav"><button class="btn primary" data-act="gs-next">${t('gs_did_it')}</button><button class="btn-quiet" data-act="gs-skip">${t('gs_skip')}</button></div>`;
+  } else if (step === 'faceid') {
+    S.pkReg = null;
+    body = html`<h1>${tm('gs_face_t')}</h1><p class="lede">${tm('gs_face_why')}</p>${PHONE_SVG.face}
+      <ol class="guide-steps"><li>${S.me.elevated ? t('gs_face_1m') : t('gs_face_1')}</li><li>${tm('gs_face_2')}</li></ol>
+      ${pkSetupBlock()}
+      <div class="guide-nav"><button class="btn-quiet" data-act="gs-skip">${t('gs_skip')}</button></div>`;
+  } else if (step === 'remind') {
+    const needHome = isIOS() && !isStandalone();
+    body = html`<h1>${t('gs_rem_t')}</h1><p class="lede">${t('gs_rem_why')}</p>${PHONE_SVG.bell}
+      ${needHome ? html`<p class="alert-soft">${t('gs_rem_home')}</p>` : html`<ol class="guide-steps"><li>${t('gs_rem_1')}</li><li>${t('gs_rem_2')}</li></ol>
+        <button class="btn primary wide" data-act="gs-push">${icon('bell')} ${t('rem_on')}</button>`}
+      <div class="guide-nav"><button class="btn-quiet" data-act="gs-skip">${t('gs_skip')}</button></div>`;
+  } else {
+    const items = [['home', t('gs_home_t')], ['faceid', tm('gs_face_t')], ['remind', t('gs_rem_t')]].filter(([k]) => order.includes(k));
+    body = html`<div class="guide-done">${PHONE_SVG.face}<h1>${t('gs_done_t')}</h1>
+      ${items.length ? html`<ul class="guide-check">${items.map(([k, l]) => html`<li class="${g.done.has(k) ? 'ok' : 'skip'}">${g.done.has(k) ? '✓' : '–'} ${l}${g.done.has(k) ? '' : html` <small>(${t('gs_skipped')})</small>`}</li>`)}</ul>` : html`<p>${t('gs_nothing')}</p>`}
+      <p class="hint">${t('gs_again')}</p><button class="btn primary wide" data-act="gs-finish">${t('gs_finish')}</button></div>`;
+  }
+  render('#/more', html`<div class="guide">${total && step !== 'done' ? html`<p class="stepper">${t('step')} ${n} ${t('of')} ${total}</p>${dots}` : ''}
+    ${note ? html`<p class="alert" role="alert">${note}</p>` : ''}${body}
+    ${g.prev && step !== 'done' ? html`<p><button class="link" data-act="gs-back">${icon('back')} ${t('back')}</button></p>` : ''}</div>`, note ? '.alert' : 'main h1');
+}
+// Home card that opens the guide, while steps are left and the person hasn't said "later".
+async function guideCard() {
+  try { if (localStorage.getItem('hub_guide_done') === '1' || Date.now() - Number(localStorage.getItem('hub_guide_later') || 0) < 7 * 86400000) return; } catch { /* ignore */ }
+  const steps = await guideSteps(); const slot = document.getElementById('guide-slot');
+  if (!steps.length || !slot) return;
+  slot.innerHTML = String(html`<section class="card guide-card"><div class="row between wrap"><h2>${t('gs_card_t')}</h2><span class="meta">${steps.length} ${steps.length === 1 ? t('gs_step1') : t('gs_steps')} · ${t('gs_mins')}</span></div>
+    <p>${steps.map(x => x === 'home' ? t('gs_home_t') : x === 'faceid' ? tm('gs_face_t') : t('gs_rem_t')).join(' · ')}</p>
+    <div class="row wrap"><a class="btn primary" href="#/getstarted">${t('gs_start')}</a><button class="btn-quiet" data-act="gs-later">${t('install_later')}</button></div></section>`);
+}
+
 async function renderReminders(note) {
   const box = document.getElementById('rem-box'); if (!box) return;
   if (S.me.sharedDevice) { box.innerHTML = String(html`<p class="meta">${t('pk_shared_note')}</p>`); return; }
@@ -1406,6 +1494,7 @@ async function route() {
       case 'dash': return await dashView(params);
       case 'alerts': return await alertsView();
       case 'more': return moreView();
+      case 'getstarted': S.guide = null; return await guideView();
       case 'admin': return await adminView(params);
       case 'accounts': return await accountsView();
       default: return go('#/home');
@@ -1463,17 +1552,21 @@ root.addEventListener('click', async (ev) => {
   if (act === 'install-later') { try { localStorage.setItem('hub_install_skip', String(Date.now())); } catch { /* ignore */ } document.querySelector('.install-tip')?.remove(); return; }
   if (act === 'push-on') {
     el.disabled = true;
-    try {
-      const perm = await Notification.requestPermission();   // first, while the tap still counts
-      if (perm !== 'granted') return renderReminders();
-      const reg = await navigator.serviceWorker.register('/sw.js'); await navigator.serviceWorker.ready;
-      const key = S.pushKey || (await api.call('push.status', {})).publicKey;
-      const raw64 = key.replace(/-/g, '+').replace(/_/g, '/'); const keyBytes = Uint8Array.from(atob(raw64 + '==='.slice((raw64.length + 3) % 4)), c => c.charCodeAt(0));
-      const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes });
-      await call('push.subscribe', { endpoint: sub.endpoint, device: deviceGuess() });
-      return renderReminders();
-    } catch (e) { if (quiet(e)) return; el.disabled = false; return renderReminders(errMsg(e)); }
+    try { await enablePush(); return renderReminders(); }
+    catch (e) { if (quiet(e)) return; el.disabled = false; return renderReminders(errMsg(e)); }
   }
+  // ---- guided phone setup
+  if (act === 'gs-next') { S.guide.done.add(S.guide.current); return guideView(); }
+  if (act === 'gs-skip') { S.guide.skipped.add(S.guide.current); return guideView(); }
+  if (act === 'gs-back') { S.guide.skipped.delete(S.guide.prev); S.guide.done.delete(S.guide.prev); return guideView(S.guide.prev); }
+  if (act === 'gs-install') { if (installEvent) { installEvent.prompt(); try { await installEvent.userChoice; } catch { /* ignore */ } installEvent = null; } S.guide.done.add('home'); return guideView(); }
+  if (act === 'gs-push') {
+    el.disabled = true;
+    try { if (await enablePush()) S.guide.done.add('remind'); else { el.disabled = false; announce(t('rem_denied')); return guideView('remind', t('rem_denied')); } return guideView(); }
+    catch (e) { if (quiet(e)) return; el.disabled = false; return guideView('remind', errMsg(e)); }
+  }
+  if (act === 'gs-finish') { try { localStorage.setItem('hub_guide_done', '1'); } catch { /* ignore */ } return go('#/home'); }
+  if (act === 'gs-later') { try { localStorage.setItem('hub_guide_later', String(Date.now())); } catch { /* ignore */ } document.querySelector('.guide-card')?.remove(); return; }
   if (act === 'push-off') {
     el.disabled = true;
     const sub = await currentPushSub();
@@ -1495,6 +1588,7 @@ root.addEventListener('click', async (ev) => {
     const o = S.pkReg; S.pkReg = null;    // a challenge is used once
     try {
       await finishRegister(o);
+      if (el.closest('.guide')) { S.guide.done.add('faceid'); return guideView(); }
       if (inOffer) { document.getElementById('pk-setup').innerHTML = String(html`<p class="success-inline">${icon('shield')} ${tm('pk_done')}</p>`); document.querySelector('#pk-offer [data-act=pk-offer-no]')?.remove(); }
       else await renderPkList(tm('pk_done'));
     } catch (e) {

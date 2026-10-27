@@ -201,3 +201,15 @@ Added after you sent the paper source: the signed record's heading now matches t
 - Every screen ends with "© <year> The Armored Group, Inc. All rights reserved."
 - The app is named "Innerspace Employee Hub" ("Innerspace" under the home-screen icon), and the app icon uses the Innerspace logo.
 - Authenticator entries keep the name "TAG Employee Hub", so people's existing authenticator codes keep working.
+
+## Guided phone setup (owner 2026-10-27: "i need a animation or guided setup")
+- **Set up this phone** has three short steps. Each one shows a moving picture of exactly what to tap:
+  1. **Home screen.** iPhone: the Share button pulses, the sheet slides up and "Add to Home Screen" lights up. Android: the ⋮ menu, then "Add to Home screen".
+  2. **Face ID.** A face-scan picture; the PIN (plus the code for management) and the Face ID approval happen right on that screen.
+  3. **Reminders.** A notification slides in. On iPhone the step explains that the Hub must be on the home screen first.
+- Steps that are already done are skipped, and every step can be skipped. It ends with "You are all set" and a checklist.
+- **Where to find it:**
+  - A card near the top of Home: "Set up this phone · 3 steps · about 2 minutes". "Not now" hides it for 7 days.
+  - Always available under More → Set up this phone.
+- The pictures are still images when the phone has "reduce motion" turned on.
+- Covered by browser test U16.
