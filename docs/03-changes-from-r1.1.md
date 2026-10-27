@@ -224,3 +224,22 @@ Added after you sent the paper source: the signed record's heading now matches t
 - The ID box at sign-in also accepts the person's email.
 - Who can invite: a full-access manager (anyone), or a manager (their own staff only).
 - **Test copy never sends email**: it shows a preview of the exact email instead. The live Hub sends through Resend only once the `RESEND_API_KEY` secret is added (see `10-onboarding-email-setup.md`); without it, invites still work as a QR code or a copied link.
+
+## My InnerPoints (owner 2026-10-27: "my points on home … such a large part of our workflow incentive")
+- Home card above "My weekly reports" showing:
+  - points this week and today;
+  - work orders finished this week;
+  - last week;
+  - since Sept 21;
+  - the latest 5 points.
+- It reads the Order Manager ledger in Quickbase; it never writes.
+- Linking is done by full access in Admin → InnerPoints; names are only suggestions.
+- On by default once `QB_TOKEN` is added; it can be hidden in Admin.
+- See `11-innerpoints-setup.md`.
+
+## Choose-your-PIN page (owner 2026-10-27: "It needs to be easy to understand and do")
+- Shows the steps ahead (PIN → home screen → Face ID; management also adds the authenticator), with the current step highlighted.
+- A small animation shows a PIN being typed.
+- Live checks as they type: "6 to 12 numbers" and "Both PINs match".
+- A Show PIN button; letters are dropped automatically.
+- Mistakes are caught on the phone before anything is sent.

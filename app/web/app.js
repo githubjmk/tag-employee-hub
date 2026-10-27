@@ -598,12 +598,13 @@ async function homeView() {
       ${surveyTile}
       <a class="big-action safety" href="#/safety/new">${icon('alert')}<span><strong>${t('home_safety')}</strong><small>${t('home_safety_sub')}</small></span></a>
     </div>
+    <div id="points-slot"></div>
     ${myWeekCard(h)}
     <div id="hours-slot"></div>
     ${h.safety.length ? html`<section class="card"><h2>${t('my_reports')}</h2><ul class="plain-list">${h.safety.map(r => html`<li><a href="#/safety/r/${r.id}">${t('t_' + r.type)}</a><span>${sChip(r.status)} <span class="meta">${fmtDate(r.created_at)}</span></span></li>`)}</ul></section>` : ''}
     ${h.links && h.links.length ? html`<h2 class="portal-section-title">${t('links')}</h2><div class="portal-tiles">${h.links.map(l => html`<a class="portal-tile" href="${l.url}" target="_blank" rel="noopener noreferrer">${icon('ext')}<strong>${L(l.label)}</strong><small>${l.note}</small><span class="sr">(${t('opens_new')})</span></a>`)}</div>` : ''}
     ${S.lang === 'es' ? html`<p class="fine">${t('es_draft')}</p>` : ''}`);
-  loadHours(); guideCard();
+  loadPoints(); loadHours(); guideCard();
 }
 // "My weekly reports": this week and last week at a glance, including where the review is.
 function myWeekCard(h) {
@@ -641,6 +642,22 @@ async function loadHours(slotId = 'hours-slot') {
   let r; try { r = await api.call('hours.mine', {}); } catch (e) { const s2 = document.getElementById(slotId); if (s2 && !(e instanceof ApiError && e.status === 401)) s2.innerHTML = String(html`<section class="card my-hours"><h2>${t('hrs_title')}</h2><p class="meta">${t('hrs_err')}</p></section>`); return; }
   const s2 = document.getElementById(slotId); if (!s2 || !r.available || !r.linked) return;
   s2.innerHTML = String(hoursCard(r)); applyCssVars(s2);
+}
+// "My InnerPoints" from the Order Manager ledger (read-only). Loaded after the page, like My hours.
+const fmtN = (n) => Number(n || 0).toLocaleString(locale());
+function pointsCard(r) {
+  return html`<section class="card my-points" aria-labelledby="ip-h"><div class="row between wrap"><h2 id="ip-h">${t('ip_title')}</h2><span class="meta">${r.demo ? t('ip_demo') : t('ip_from')}</span></div>
+    <div class="ip-hero"><p class="ip-big"><strong>${fmtN(r.thisWeek)}</strong> <span>${t('ip_pts')} ${t('ip_week')}</span></p>
+      ${r.today ? html`<p class="ip-today">+${fmtN(r.today)} ${t('ip_today')}</p>` : ''}</div>
+    <ul class="ip-stats"><li><b>${fmtN(r.jobsThisWeek)}</b><span>${t('ip_jobs')}</span></li><li><b>${fmtN(r.lastWeek)}</b><span>${t('ip_last')}</span></li><li><b>${fmtN(r.sinceLaunch)}</b><span>${t('ip_since').replace('{d}', fmtDate(r.launch + 'T12:00:00Z', { month: 'short', day: 'numeric' }))}</span></li></ul>
+    ${r.recent.length ? html`<h3 class="h4">${t('ip_recent')}</h3><ul class="ip-recent">${r.recent.map(x => html`<li><span class="ip-plus">+${fmtN(x.points)}</span><span class="grow">${x.kind === 'wo' && x.wo ? t('ip_k_wo_n').replace('{n}', x.wo) : html`${t('ip_k_' + x.kind)}${x.wo ? html` <span class="meta">· #${x.wo}</span>` : ''}`}</span><span class="meta nowrap">${fmtDate(x.at, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</span></li>`)}</ul>`
+      : html`<p class="meta">${t('ip_none')}</p>`}</section>`;
+}
+async function loadPoints(slotId = 'points-slot') {
+  const slot = document.getElementById(slotId); if (!slot) return;
+  let r; try { r = await api.call('points.mine', {}); } catch (e) { const s2 = document.getElementById(slotId); if (s2 && !(e instanceof ApiError && e.status === 401)) s2.innerHTML = String(html`<section class="card my-points"><h2>${t('ip_title')}</h2><p class="meta">${t('ip_err')}</p></section>`); return; }
+  const s2 = document.getElementById(slotId); if (!s2 || !r.available || !r.linked) return;
+  s2.innerHTML = String(pointsCard(r));
 }
 const linkCard = (l) => html`<a class="link-card" href="${l.url}" target="_blank" rel="noopener noreferrer"><span>${L(l.label)}</span><small>${l.note}</small>${icon('ext')}<span class="sr">(${t('opens_new')})</span></a>`;
 
@@ -1455,6 +1472,7 @@ async function adminView(params) {
   if (anyRole('manager', 'hr')) tabs.push(['integrity', 'Integrity']);
   if (can('admin.restore')) tabs.push(['restore', 'Restore & backup']);
   if (can('admin.restore')) tabs.push(['reminders', 'Reminders']);
+  if (can('admin.restore')) tabs.push(['ip', 'InnerPoints']);
   if (can('admin.restore')) tabs.push(['qbt', 'QuickBooks Time']);
   let body = '';
   if (tab === 'versions') {
@@ -1478,6 +1496,23 @@ async function adminView(params) {
       ${S.me.demo && anyRole('manager', 'hr') ? html`<details><summary>Demo: simulate text failures</summary><form data-form="simfail" class="row wrap" novalidate><select name="employeeId" aria-label="Person">${(await employees()).map(e => html`<option value="${e.id}">${e.name}</option>`)}</select><input name="count" type="number" min="0" max="10" value="4" aria-label="Failures"><button class="btn" type="submit">Set</button></form></details>` : ''}`;
   } else if (tab === 'integrity') {
     body = html`<p>Re-computes every signed record and the audit-log hash chain.</p><button class="btn primary" data-act="verify">Run integrity check</button><div id="verify-out" role="status"></div>`;
+  } else if (tab === 'ip' && can('admin.restore')) {
+    const st = await call('admin.ipStatus', {});
+    let list = null;
+    if (st.configured && st.ok) list = await call('admin.ipPeople', { refresh: params.get('refresh') === '1' });
+    body = html`<p class="lede">Read-only: each person sees their own InnerPoints from the Order Manager on Home. Nothing in Quickbase is changed.</p>
+      <section class="card"><h2>“My InnerPoints” card: ${st.show ? 'ON' : 'OFF'}</h2><p>Shows each linked person their points this week, last week and since Sept 21, plus their latest points.</p>
+        <button class="btn" data-act="ip-show" data-on="${st.show ? '0' : '1'}">${st.show ? 'Hide the InnerPoints card' : 'Show the InnerPoints card'}</button></section>
+      <section class="card"><h2>${!st.configured ? 'Not connected' : st.ok ? (st.demo ? 'Sample points (test copy)' : 'Connected') : 'Connection problem'}</h2>
+        ${!st.configured ? html`<p>Add a Quickbase user token to the live Hub as the Cloudflare secret <code>QB_TOKEN</code> (steps in the project docs, 11-innerpoints-setup). The test copy never uses the real token.</p>`
+          : st.ok ? html`<p>${st.people} ${st.people === 1 ? 'person has' : 'people have'} InnerPoints since Sept 21 · ${st.links} linked to Hub accounts.</p>` : html`<p class="alert">${st.error}</p>`}</section>
+      ${list ? html`<section class="card"><div class="row between wrap"><h2>Link accounts</h2><a class="btn-quiet" href="#/admin?tab=ip&refresh=1">Refresh list</a></div>
+        <p class="hint">Pick each person's name as it appears in the Order Manager. A matching name is suggested, but nothing is linked until you choose it. Only people with points since Sept 21 are listed.</p>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="InnerPoints links"><table class="matrix"><thead><tr><th scope="col">Hub account</th><th scope="col">Order Manager employee</th></tr></thead><tbody>
+        ${list.accounts.map(a => html`<tr><td>${a.name} <span class="meta">${a.id}</span></td><td><form data-form="iplink" data-id="${a.id}" class="row wrap qbt-row"><select name="ipEmpId" aria-label="Order Manager employee for ${a.name}"><option value="">— not linked —</option>
+          ${list.people.filter(u => !u.linkedTo || u.linkedTo === a.id).map(u => html`<option value="${u.id}" ${(a.linkedTo && a.linkedTo.id === u.id) ? raw('selected') : ''}>${u.name}</option>`)}</select>
+          <button class="btn-quiet" type="submit">Save</button>${a.suggestion ? html`<button class="link" type="submit" name="suggest" value="${a.suggestion.id}">Use suggestion: ${a.suggestion.name}</button>` : ''}${a.linkedTo ? html`<span class="success-inline">✓ linked</span>` : ''}</form></td></tr>`)}
+        </tbody></table></div></section>` : ''}`;
   } else if (tab === 'qbt' && can('admin.restore')) {
     const st = await call('admin.qbtStatus', {});
     let list = null;
@@ -1660,6 +1695,7 @@ root.addEventListener('click', async (ev) => {
     return renderReminders();
   }
   if (act === 'push-test') { el.disabled = true; try { await call('push.test', {}); return renderReminders(t('rem_test_sent')); } catch (e) { if (!quiet(e)) { el.disabled = false; announce(errMsg(e)); } } return; }
+  if (act === 'ip-show') { el.disabled = true; try { await call('admin.ipShow', { show: el.dataset.on === '1' }); return route(); } catch (e) { if (!quiet(e)) { el.disabled = false; announce(errMsg(e)); } } return; }
   if (act === 'qbt-show') { el.disabled = true; try { await call('admin.qbtShowHours', { show: el.dataset.on === '1' }); return route(); } catch (e) { if (!quiet(e)) { el.disabled = false; announce(errMsg(e)); } } return; }
   if (act === 'push-switch') { el.disabled = true; try { await call('admin.pushSettings', { enabled: el.dataset.on === '1' }); return route(); } catch (e) { if (!quiet(e)) { el.disabled = false; announce(errMsg(e)); } } return; }
   if (act === 'pk-relogin') { setSharedPref(false); await wipe(); return go('#/login'); }
@@ -1878,6 +1914,11 @@ root.addEventListener('submit', async (ev) => {
     if (kind === 'changepin') { await call('auth.setPin', { currentPin: f.currentPin.value, newPin: f.newPin.value, confirmPin: f.confirmPin.value }); form.reset(); announce('PIN changed'); btn.disabled = false; return; }
     if (kind === 'regdevice') { await call('device.register', { label: f.label.value }); announce('This browser is now a registered shop tablet'); return route(); }
     if (kind === 'revdevice') { await call('device.revoke', { deviceId: form.dataset.id }); return route(); }
+    if (kind === 'iplink') {
+      const pick = btn && btn.name === 'suggest' ? btn.value : f.ipEmpId.value;
+      await call('admin.ipLink', { employeeId: form.dataset.id, ipEmpId: pick || null });
+      announce('Saved'); return route();
+    }
     if (kind === 'qbtlink') {
       const pick = btn && btn.name === 'suggest' ? btn.value : f.qbtUserId.value;
       await call('admin.qbtLink', { employeeId: form.dataset.id, qbtUserId: pick || null });

@@ -965,6 +965,38 @@ def t_invite(browser, errors):
         return {'newEmployeeId': new_id, 'flow': 'add with email -> preview -> link -> PIN -> guided setup; link works once'}
 
 
+
+@test('U18 InnerPoints: full access links a person in Admin -> InnerPoints (suggestion needs a click) -> the person sees My InnerPoints on Home')
+def t_points(browser, errors):
+    with Server() as srv:
+        ctx, pg = new_page(browser, TABLET, errors)
+        login(pg, srv, 'E-101', shared=False)
+        pg.goto(srv.base + '#/admin?tab=ip'); pg.wait_for_selector('form[data-form=iplink]')
+        expect(pg.locator('main')).to_contain_text('Sample points (test copy)')
+        row = pg.locator('form[data-form=iplink][data-id=E-106]')
+        row.locator('button[name=suggest]').click()
+        pg.wait_for_selector('form[data-form=iplink][data-id=E-106] .success-inline')
+        axe(pg, 'admin innerpoints'); shot(pg, 'u18-01-admin-link')
+        ctx.close()
+        ctx, pg = new_page(browser, PHONE, errors)
+        login(pg, srv, 'E-106', shared=False)
+        pg.goto(srv.base + '#/home'); pg.wait_for_selector('.my-points .ip-big strong')
+        expect(pg.locator('.my-points h2')).to_have_text('My InnerPoints')
+        assert int(pg.inner_text('.my-points .ip-big strong').replace(',', '')) > 0
+        expect(pg.locator('.my-points .ip-recent li').first).to_contain_text('+')
+        box_pts = pg.locator('.my-points').bounding_box(); box_week = pg.locator('.my-week').bounding_box()
+        assert box_pts['y'] < box_week['y'], 'points sit above My weekly reports'
+        axe(pg, 'home with points'); no_hscroll(pg, 'home with points'); shot(pg, 'u18-02-home-points')
+        ctx.close()
+        ctx, pg = new_page(browser, PHONE, errors)
+        login(pg, srv, 'E-107', shared=False)                       # not linked: no card, no error
+        pg.goto(srv.base + '#/home'); pg.wait_for_selector('.my-week')
+        pg.wait_for_timeout(800)
+        expect(pg.locator('.my-points')).to_have_count(0)
+        ctx.close()
+        return 'linked by a click in Admin; card on Home above My weekly reports; unlinked people see nothing'
+
+
 if __name__ == '__main__':
     with sync_playwright() as p:
         browser = p.chromium.launch()

@@ -15,6 +15,7 @@ import { SCHEMA, UPGRADES } from '../core/schema.js';
 import { makeGoToSms } from '../core/goto-sms.js';
 import { makeQbTime } from '../core/qbtime.js';
 import { makeResendMailer } from '../core/mailer.js';
+import { makeInnerPoints } from '../core/innerpoints.js';
 import { doDb, persistentClock } from './do-adapters.js';
 
 const TICK_MS = 60_000;
@@ -59,6 +60,8 @@ export class Hub extends DurableObject {
     // QuickBooks Time (read-only) only on the live Hub: the test copy always uses invented sample hours.
     // Welcome emails only from the live Hub (Resend, innerspacecases.com). The test copy keeps previews.
     if (!demo) platform.mailer = makeResendMailer({ fetch: (...a) => fetch(...a), apiKey: env.RESEND_API_KEY, from: env.HUB_MAIL_FROM || undefined, replyTo: env.HUB_MAIL_REPLY_TO || null });
+    // InnerPoints (read-only, Order Manager in Quickbase) only on the live Hub; the test copy shows invented points.
+    if (!demo && env.QB_TOKEN) platform.innerpoints = makeInnerPoints({ fetch: (...a) => fetch(...a), token: env.QB_TOKEN, realm: env.QB_REALM || undefined });
     if (!demo && env.QBT_TOKEN) platform.qbtime = makeQbTime({ fetch: (...a) => fetch(...a), token: env.QBT_TOKEN });
     const service = createService({ db, crypto, clock, senders, platform, config: { demo, pilotStartWeek: demo ? PILOT_START_WEEK : (env.HUB_PILOT_START_WEEK || null) } });
     const seeded = (() => { try { return !!db.get("SELECT v FROM meta WHERE k='seeded'"); } catch { return false; } })();

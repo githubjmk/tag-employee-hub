@@ -20,6 +20,7 @@ import { internalRolesFor, describeRoles, permissionsOf } from './permissions.js
 import { verifyRegistration, verifyAssertion, b64urlEncode, WebAuthnError, ALG } from './webauthn.js';
 import { pushEndpointOk, generateVapidKeys, sendPush } from './webpush.js';
 import { makeDemoQbTime, QbtError } from './qbtime.js';
+import { makeDemoInnerPoints, IpError, IP_LAUNCH } from './innerpoints.js';
 import { makePreviewMailer, inviteEmail } from './mailer.js';
 
 export class HubError extends Error {
@@ -2291,6 +2292,80 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     return { ok: true, linkedTo: { id: u.id, name: u.name } };
   };
 
+  // ---------------------------------------------------------------- InnerPoints (R1.3, owner 2026-10-27)
+  // "It's such a large part of our workflow incentive that it should be there": each person sees
+  // their own InnerPoints on Home, read-only from the Order Manager ledger in Quickbase. On by
+  // default once connected (QB_TOKEN, live Hub only); a full-access manager links each Hub account to
+  // its Quickbase employee (names are only suggestions) and can hide the card in Admin.
+  const ipx = 'innerpoints' in platform ? platform.innerpoints : (cfg.demo ? makeDemoInnerPoints({ clock, people: () => db.all("SELECT display_name name FROM employees WHERE status='active' ORDER BY id", []) }) : null);
+  const ipFail = (e) => { if (e instanceof IpError) throw new HubError(502, e.code, e.message); throw e; };
+  const ipShown = () => (db.get("SELECT v FROM meta WHERE k='ip_show'") || {}).v !== '0';
+  const IP_LABEL = { WO_COMPLETE: 'wo', FAST_COMPLETE: 'fast', DESIGN: 'design', SALES_CALL: 'sales', SAFETY: 'safety', MANUAL: 'bonus' };
+  A['points.mine'] = async (ctx) => {
+    if (!ipx || !ipShown()) return { available: false };
+    const link = db.get('SELECT * FROM ip_links WHERE employee_id=?', [ctx.me.id]);
+    if (!link) return { available: true, linked: false };
+    const cur = reportingWeek(now(), tz), prev = prevWeek(cur);
+    const rows = await cached('ip:' + link.ip_emp_id, 3 * 60000, () => ipx.awards({ empId: link.ip_emp_id, sinceYmd: IP_LAUNCH })).catch(ipFail);
+    const dayOf = (iso) => iso ? ymdOf(new Date(iso), tz) : '';
+    const sum = (list) => list.reduce((a, r) => a + r.points, 0);
+    const thisWeek = rows.filter(r => dayOf(r.at) >= cur.start && dayOf(r.at) <= cur.end);
+    const today = ymdOf(now(), tz);
+    return { available: true, linked: true, demo: !!ipx.demo,
+      today: sum(rows.filter(r => dayOf(r.at) === today)),
+      thisWeek: sum(thisWeek), jobsThisWeek: thisWeek.filter(r => r.code === 'WO_COMPLETE').length,
+      lastWeek: sum(rows.filter(r => dayOf(r.at) >= prev.start && dayOf(r.at) <= prev.end)),
+      sinceLaunch: sum(rows), launch: IP_LAUNCH, weekStart: cur.start,
+      recent: rows.slice(0, 5).map(r => ({ points: r.points, kind: IP_LABEL[r.code] || 'other', code: r.code, at: r.at, wo: r.wo })), asOf: nowIso() };
+  };
+  A['admin.ipStatus'] = async (ctx) => {
+    if (!has(ctx, 'hr')) throw deny();
+    const links = db.get('SELECT COUNT(*) n FROM ip_links').n;
+    if (!ipx) return { configured: false, links, show: ipShown() };
+    try { const people = await cached('ip:people', 30 * 60000, () => ipx.people(IP_LAUNCH)); return { configured: true, demo: !!ipx.demo, ok: true, people: people.length, links, show: ipShown() }; }
+    catch (e) { if (e instanceof IpError) return { configured: true, demo: !!ipx.demo, ok: false, error: e.message, links, show: ipShown() }; throw e; }
+  };
+  A['admin.ipPeople'] = async (ctx, { refresh } = {}) => {
+    if (!has(ctx, 'hr')) throw deny();
+    if (!ipx) throw new HubError(409, 'ip_off', 'InnerPoints is not connected.');
+    if (refresh) qbtCache.delete('ip:people');
+    const people = await cached('ip:people', 30 * 60000, () => ipx.people(IP_LAUNCH)).catch(ipFail);
+    const links = db.all('SELECT * FROM ip_links', []);
+    const accounts = db.all("SELECT id, display_name FROM employees WHERE status='active' ORDER BY display_name", []).map(e => {
+      const l = links.find(x => x.employee_id === e.id);
+      const first = normalizeName(e.display_name).split(' ')[0];
+      const sug = !l ? (people.find(u => normalizeName(u.name) === normalizeName(e.display_name)) || (people.filter(u => normalizeName(u.name).split(' ')[0] === first).length === 1 ? people.find(u => normalizeName(u.name).split(' ')[0] === first) : null)) : null;
+      return { id: e.id, name: e.display_name, linkedTo: l ? { id: l.ip_emp_id, name: l.ip_name } : null, suggestion: sug && !links.some(x => x.ip_emp_id === sug.id) ? sug : null };
+    });
+    return { demo: !!ipx.demo, people: people.map(u => ({ ...u, linkedTo: (links.find(l => l.ip_emp_id === u.id) || {}).employee_id || null })), accounts };
+  };
+  A['admin.ipShow'] = (ctx, { show }) => {
+    if (!has(ctx, 'hr')) throw deny();
+    tx(() => { db.run("INSERT INTO meta (k, v) VALUES ('ip_show', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", [show ? '1' : '0']); audit(ctx.me.id, show ? 'ip.card_shown' : 'ip.card_hidden', 'system', 'innerpoints', {}); });
+    return { show: ipShown() };
+  };
+  A['admin.ipLink'] = async (ctx, { employeeId, ipEmpId }) => {
+    if (!has(ctx, 'hr')) throw deny('Only a full-access manager can link InnerPoints.');
+    const e = emp(employeeId); if (!e) throw notFound();
+    if (!ipEmpId) {
+      tx(() => { db.run('DELETE FROM ip_links WHERE employee_id=?', [e.id]); audit(ctx.me.id, 'ip.unlinked', 'employee', e.id, {}); });
+      return { ok: true, linkedTo: null };
+    }
+    if (!ipx) throw new HubError(409, 'ip_off', 'InnerPoints is not connected.');
+    const people = await cached('ip:people', 30 * 60000, () => ipx.people(IP_LAUNCH)).catch(ipFail);
+    const u = people.find(x => x.id === String(ipEmpId));
+    if (!u) throw bad('That Order Manager employee was not found (refresh the list).', 'ip_emp');
+    const other = db.get('SELECT employee_id FROM ip_links WHERE ip_emp_id=? AND employee_id != ?', [u.id, e.id]);
+    if (other) throw new HubError(409, 'ip_taken', `That Order Manager employee is already linked to ${nameOf(other.employee_id)}.`);
+    tx(() => {
+      db.run('INSERT INTO ip_links (employee_id, ip_emp_id, ip_name, linked_by, linked_at) VALUES (?,?,?,?,?) ON CONFLICT(employee_id) DO UPDATE SET ip_emp_id=excluded.ip_emp_id, ip_name=excluded.ip_name, linked_by=excluded.linked_by, linked_at=excluded.linked_at',
+        [e.id, u.id, u.name, ctx.me.id, nowIso()]);
+      audit(ctx.me.id, 'ip.linked', 'employee', e.id, { ipEmpId: u.id });
+    });
+    qbtCache.delete('ip:' + u.id);
+    return { ok: true, linkedTo: { id: u.id, name: u.name } };
+  };
+
   // ---------------------------------------------------------------- onboarding invites (R1.3, owner 2026-10-27)
   // Management sends a welcome email (or shows the link as a QR code in person). The link works once,
   // for 72 hours, and lets the person choose their PIN; then the guided phone setup takes over.
@@ -2394,7 +2469,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   // The file carries the audit-chain head and its own SHA-256 so a copy can be checked later.
   const BACKUP_TABLES = ['employees', 'devices', 'esign_consents', 'absences', 'survey_assignments', 'survey_drafts', 'survey_submissions', 'survey_amendments',
     'supervisor_reviews', 'review_events', 'paper_events', 'safety_reports', 'safety_events', 'corrective_actions', 'ca_events', 'attachments', 'notifications',
-    'notification_attempts', 'audit_events', 'passkeys', 'qbt_links', 'employee_contacts', 'invites'];
+    'notification_attempts', 'audit_events', 'passkeys', 'qbt_links', 'employee_contacts', 'invites', 'ip_links'];
   const BACKUP_OMIT = { employees: ['pin_salt', 'pin_hash', 'setup_code_hash', 'setup_code_expires', 'setup_code_issued_by', 'totp_secret', 'totp_last_counter', 'failed_logins', 'locked_until', 'lockouts_24h', 'sim_fail_sms'], devices: ['token_hash'], passkeys: ['public_key_jwk', 'credential_id'], invites: ['token_hash'] };
   A['admin.backupExport'] = (ctx) => {
     if (!has(ctx, 'hr')) throw deny('Only a full-access manager can export a backup.');

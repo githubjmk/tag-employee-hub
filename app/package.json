@@ -6,7 +6,7 @@
   "description": "TAG Employee Hub R1.2 — weekly report prototype (simplified sign-in). Synthetic data, no production integrations.",
   "scripts": {
     "start": "node --no-warnings server/server.js",
-    "test": "node --no-warnings --test --test-concurrency=1 tests/api.test.mjs tests/passkey.test.mjs tests/push.test.mjs tests/qbtime.test.mjs tests/invite.test.mjs",
+    "test": "node --no-warnings --test --test-concurrency=1 tests/api.test.mjs tests/passkey.test.mjs tests/push.test.mjs tests/qbtime.test.mjs tests/invite.test.mjs tests/innerpoints.test.mjs",
     "test:ui": "python3 tests/ui_test.py"
   },
   "engines": { "node": ">=22.13" }

@@ -76,6 +76,15 @@ CREATE TABLE IF NOT EXISTS qbt_links (
   linked_by TEXT NOT NULL,
   linked_at TEXT NOT NULL
 );
+-- InnerPoints link, R1.3: which Order Manager (Quickbase) employee record each Hub account is
+-- (set by management, never guessed). Read-only use: "My InnerPoints" on Home.
+CREATE TABLE IF NOT EXISTS ip_links (
+  employee_id TEXT PRIMARY KEY REFERENCES employees(id),
+  ip_emp_id TEXT NOT NULL UNIQUE,
+  ip_name TEXT NOT NULL,
+  linked_by TEXT NOT NULL,
+  linked_at TEXT NOT NULL
+);
 -- Email per account (optional), R1.3: onboarding invites and signing in with email instead of the ID.
 CREATE TABLE IF NOT EXISTS employee_contacts (
   employee_id TEXT PRIMARY KEY REFERENCES employees(id),
