@@ -201,3 +201,8 @@ New checks:
   - On a phone: ID, then questions, then a wrong PIN is refused with nothing signed, then the right PIN signs with the record verified. The ID is remembered for next time, and signing out returns to the portal with the session gone (401).
   - On a registered shop tablet: tap your name, answer, PIN, signed. It then counts down to sign itself out and does not remember who signed.
 - **Manual check on the Cloudflare runtime with Cloudflare's test keys:** the bot check rendered invisibly (no visible box) and the one-PIN report signed.
+
+## Onboarding email (2026-10-27, commit a0015e7)
+- API: 75/75 (`npm test`), including IN-01…IN-06. These cover the Resend request from info@innerspacecases.com; the preview-only test copy; the single-use 72-hour link; PIN and session on accept; a fresh authenticator code for management; login by email; who can invite; and revoke and deactivation.
+- Browser: 17/17 on the Node server and 17/17 on local Cloudflare (wrangler dev), including U17. U17 covers adding a person with an email, the styled email preview, opening the link on a phone, choosing a PIN, landing in the guided setup, the link refusing a second use, and the setup list showing Invited and PIN.
+- Not tested: a real email delivery. That needs the live `RESEND_API_KEY`, which has not been added.
