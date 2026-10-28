@@ -250,3 +250,8 @@ New checks:
 - **Browser:** 22/22 on the Node server and 22/22 on local Cloudflare (wrangler dev), on the final code.
 - **Upgrade:** a production-mode database made by the live version (d72afb3) started on the new code with no errors. New tables were created, the account was kept, `/api/demo/reset` returned 404, and documents required sign-in.
 - **Not tested:** real email delivery (needs `RESEND_API_KEY`) and real Quickbase/QuickBooks Time data (need `QB_TOKEN` / `QBT_TOKEN`).
+
+## Live deploy 2026-10-27 22:23 PT (owner: "Yes, deploy live now")
+- Commit 22af4e3, Worker version dbe3f61b-6ab9-4f93-9dba-f158716a2212, via the GitHub workflow (target live); tests passed in CI.
+- Checked: production mode, the new routes respond, the demo reset returns 404, documents and time off need sign-in, the portal and the welcome-link page render, and there were no console errors in Chrome.
+- Found after deploy: the sign-in and welcome-link pages were not centred on wide screens (an old 860px rule). Fixed on the test copy (next live deploy).
