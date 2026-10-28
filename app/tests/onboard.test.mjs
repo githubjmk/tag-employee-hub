@@ -28,6 +28,8 @@ test('OB-01 a new account starts a checklist; existing staff have none; the new 
   T.nia = r.account.id;
   assert.ok(db.get('SELECT 1 FROM onboarding WHERE employee_id=?', [T.nia]));
   assert.equal((await call('E-106', 'onboard.get')).active, false, 'Kim (existing) has no checklist');
+  const existing = await call('E-101', 'accounts.create', { name: 'Ed Longtime', language: 'en', role: 'staff', reportsTo: 'E-102', startDate: '2026-10-12', newHire: false });
+  assert.equal(db.get('SELECT 1 FROM onboarding WHERE employee_id=?', [existing.account.id]), undefined, 'someone who already works here gets no new-hire checklist');
   const full = await call('E-101', 'onboard.get', { employeeId: T.nia });
   assert.equal(full.items.length, 17); assert.equal(full.done, 0);
   // Nia accepts her invite and looks at her own checklist

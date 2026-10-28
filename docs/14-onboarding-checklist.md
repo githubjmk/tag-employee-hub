@@ -21,3 +21,9 @@ Owner, 2026-10-28: "ok lets keep moving" (next step after go-live: the onboardin
 - **Finishing:** the checklist completes by itself when every required item is done. Full access can close or reopen it.
 - **Privacy:** only ticks are stored (who, what, when). I-9 documents, tax forms, bank details and EEOC answers are never entered in the Hub. The screens say so.
 - Everything is audited and included in the backup.
+- Add a person asks "Who is this?": **Already works here** (preselected, no new-hire checklist) or **New hire** (starts the onboarding checklist). A checklist can still be started later from Accounts.
+
+## Rolling out to current staff (owner 2026-10-28: "what do we do to onboard existings?")
+- Not in the Hub yet: Add a person ("Already works here"), then the welcome email or the invite QR code in person (a shop meeting is fastest).
+- Added but the temporary PIN was never used: Send welcome email / Show invite QR code.
+- Already using their own PIN: nothing to invite. Home shows "Set up this phone", and published documents appear as "Please read and sign".

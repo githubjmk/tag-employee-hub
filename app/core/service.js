@@ -914,7 +914,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
       db.run(`INSERT INTO employees (id, display_name, preferred_language, status, start_date, supervisor_id, roles, department, sms_phone, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
         [eid, f.name, f.language, 'active', start, f.reportsTo, JSON.stringify(f.roles), f.department, f.smsPhone, nowIso()]);
       setEmail(eid, input.email);
-      db.run('INSERT INTO onboarding (employee_id, started_at, started_by) VALUES (?,?,?)', [eid, nowIso(), ctx.me.id]);   // new hire checklist
+      if (input.newHire !== false) db.run('INSERT INTO onboarding (employee_id, started_at, started_by) VALUES (?,?,?)', [eid, nowIso(), ctx.me.id]);   // new hire checklist (not for people who already work here)
       audit(ctx.me.id, 'account.created', 'employee', eid, { roles: f.roles, reportsTo: f.reportsTo, email: !!input.email });
     });
     const e = emp(eid);

@@ -1134,6 +1134,7 @@ def t_onboard(browser, errors):
         f = 'form[data-form=acreate] '
         pg.fill(f + 'input[name=name]', 'Ona Firstweek'); pg.fill(f + 'input[name=email]', 'ona@example.com')
         pg.select_option(f + 'select[name=reportsTo]', 'E-102')
+        pg.check(f + 'input[name=newHire][value="1"]')
         pg.click(f + 'button[type=submit]'); pg.wait_for_selector('.acct-out .invite-box')
         link = pg.inner_text('.acct-out .invite-box .code').strip()
         new_id = pg.locator('.acct-out:has(.invite-box)').locator('xpath=ancestor::article').get_attribute('id').replace('acct-', '')

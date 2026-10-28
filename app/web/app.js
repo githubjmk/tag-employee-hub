@@ -1204,6 +1204,9 @@ function accountForm(a, managers) {
     <label class="check"><input type="checkbox" name="fullAccess" ${v.fullAccess ? raw('checked') : ''}><span><strong>Full access</strong> (Management only): every employee's surveys and employee accounts</span></label>
     <label class="check"><input type="checkbox" name="safetyContact" ${v.safetyContact ? raw('checked') : ''}><span><strong>Safety contact</strong> (Management only): gets urgent safety alerts and escalations</span></label>
     <label class="field"><span>Mobile number for urgent safety texts (Management only, optional)</span><input name="smsPhone" inputmode="tel" autocomplete="off" value="${v.smsPhone && v.smsPhone !== 'on file' ? v.smsPhone : ''}" placeholder="818-555-0142"></label>
+    ${isNew ? html`<fieldset class="field"><legend>Who is this?</legend><div class="choice-list">
+      <label class="check"><input type="radio" name="newHire" value="0" checked><span><strong>Already works here</strong> (no new-hire checklist)</span></label>
+      <label class="check"><input type="radio" name="newHire" value="1"><span><strong>New hire</strong> — start the onboarding checklist (I-9, W-4, PPE, safety walk-through…)</span></label></div></fieldset>` : ''}
     ${isNew ? html`<label class="check"><input type="checkbox" name="sendInvite" checked><span><strong>Send the welcome email now</strong> (staff, if an email is filled in). It has a one-time link to choose a PIN and set up the phone. Management accounts are set up in person.</span></label>` : ''}
     <button class="btn primary" type="submit">${isNew ? 'Create account' : 'Save changes'}</button></form>`;
 }
@@ -2319,7 +2322,7 @@ root.addEventListener('submit', async (ev) => {
     if (kind === 'acreate' || kind === 'aupdate') {
       const input = { name: f.name.value, language: f.language.value, reportsTo: f.reportsTo.value || null, role: form.querySelector('input[name=role]:checked')?.value, fullAccess: f.fullAccess.checked, safetyContact: f.safetyContact.checked, smsPhone: f.smsPhone.value, email: f.email.value };
       if (kind === 'acreate') {
-        const r = await call('accounts.create', { ...input, employeeId: f.employeeId.value.trim() || undefined, startDate: f.startDate.value });
+        const r = await call('accounts.create', { ...input, employeeId: f.employeeId.value.trim() || undefined, startDate: f.startDate.value, newHire: form.querySelector('input[name=newHire]:checked')?.value === '1' });
         let inv = null, invErr = null;
         if (f.sendInvite.checked && f.email.value.trim() && input.role === 'staff') { try { inv = await call('invite.create', { employeeId: r.account.id, send: true }); } catch (e) { if (quiet(e)) return; invErr = errMsg(e); } }
         EMP = null; await accountsView();
