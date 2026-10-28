@@ -362,7 +362,7 @@ async function joinView(token, msg) {
     <p class="join-lead">${t('join_lead')} <strong>${t('join_count').replace('{n}', steps.length)}</strong></p>
     <ol class="join-steps">${steps.map(([k, ic], i) => html`<li class="${i === 0 ? 'now' : ''}"><span class="js-num" aria-hidden="true">${i + 1}</span><span class="js-ic" aria-hidden="true">${ic === 'face' ? FACE_IC : icon(ic)}</span><span class="js-label">${t('join_s_' + k)}</span>${i === 0 ? html`<span class="chip c-open">${t('join_now_tag')}</span>` : ''}</li>`)}</ol>
     ${msg ? html`<p class="alert" role="alert" tabindex="-1">${msg}</p>` : ''}
-    ${signedInAs ? html`<p class="alert-soft" role="note">${t('join_signed_in').replace('{n}', signedInAs)}</p>` : ''}
+    ${signedInAs ? html`<p class="alert-soft" role="note">${t('join_signed_in').replaceAll('{n}', signedInAs)}</p>` : ''}
     <form data-form="join" data-token="${token}" class="join-form" novalidate>
       <h2 class="h3">${t('join_now')}</h2>
       <div class="pin-demo" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><b>✓</b></div>
