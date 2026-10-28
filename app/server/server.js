@@ -36,7 +36,8 @@ export function createServer(hubRef, { secureCookies = false, devReset = false }
     service: current().service, secureCookies,
     demo: {
       people: () => demoPeople(current().db, current().crypto, current().clock.now()),
-      deviceToken: () => current().db.get("SELECT v FROM meta WHERE k='demo_device_token'").v
+      deviceToken: () => current().db.get("SELECT v FROM meta WHERE k='demo_device_token'").v,
+      reset: async () => { current().stop(); hubRef.hub = await createHub(hubRef.options); handler = handlerFor(); }
     },
     devReset: devReset ? Object.assign(async () => { current().stop(); hubRef.hub = await createHub(hubRef.options); handler = handlerFor(); }, {
       tick: async ({ advanceMinutes = 0 } = {}) => { current().clock.advance(Math.max(0, Math.min(24 * 60, Number(advanceMinutes) || 0)) * 60000); return current().service.tick(); }

@@ -251,3 +251,6 @@ Added after you sent the paper source: the signed record's heading now matches t
   - this week's signed count, missing, waiting for review and waiting on an employee;
   - **Open the dashboard** and **People & invites** buttons.
 - Bottom bar for managers: Home · Dashboard · Review · Safety · More. Accounts ("People & invites") moved to the Home team card and More.
+
+## Test copy: start the sample data over (2026-10-27)
+- More → "Start the sample data over" (test copy only, full-access managers, two taps). It puts the invented data and the demo clock back to Oct 16 and signs everyone out. The live Hub has no such button: the server refuses unless the copy is the demo.

@@ -747,6 +747,13 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   // ---------------------------------------------------------------- actions
   const PRE_PIN_ACTIONS = new Set(['session.me', 'auth.setPin']);
 
+  // Test copy only: a full-access manager can start the invented sample data over (the demo clock
+  // keeps running, so the sample weeks age). The live Hub has no such action.
+  A['demo.resetCheck'] = (ctx) => {
+    if (!cfg.demo) throw deny();
+    if (!has(ctx, 'hr')) throw deny('Only a full-access manager can start the sample data over.');
+    return { ok: true };
+  };
   A['session.me'] = (ctx) => {
     const c = consentOf(ctx.me.id);
     const unseen = db.get("SELECT COUNT(*) n FROM notifications WHERE recipient_id=? AND channel='in_app' AND seen_at IS NULL", [ctx.me.id]).n;

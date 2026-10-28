@@ -85,7 +85,9 @@ export class Hub extends DurableObject {
     }), { tick: async ({ advanceMinutes = 0 } = {}) => { if (clock.advance) clock.advance(Math.max(0, Math.min(1440, Number(advanceMinutes) || 0)) * 60000); return this.hub.service.tick(); } }) : null;
     this.handler = createHttpHandler({
       service, secureCookies: env.HUB_SECURE_COOKIES === '1',
-      demo: demo ? { people: () => demoPeople(this.hub.db, this.hub.crypto, this.hub.clock.now()), deviceToken: () => this.hub.db.get("SELECT v FROM meta WHERE k='demo_device_token'").v } : null,
+      demo: demo ? { people: () => demoPeople(this.hub.db, this.hub.crypto, this.hub.clock.now()), deviceToken: () => this.hub.db.get("SELECT v FROM meta WHERE k='demo_device_token'").v,
+        // Test copy only: wipe the invented data and seed it again (clock back to the sample start).
+        reset: () => this.ctx.blockConcurrencyWhile(async () => { await this.ctx.storage.deleteAll(); this.hub = null; await this.boot(); }) } : null,
       devReset,
       turnstile: makeTurnstile({ siteKey: env.TURNSTILE_SITE_KEY, secret: env.TURNSTILE_SECRET, fetch: (...a) => fetch(...a) }),
       bootstrapCode: !demo && env.HUB_BOOTSTRAP_CODE ? env.HUB_BOOTSTRAP_CODE : null,

@@ -187,6 +187,11 @@ export function createHttpHandler({ service, secureCookies = false, demo = null,
         const token = b.on ? await demo.deviceToken() : '';
         return json(200, { ok: true, kiosk: !!b.on }, { 'Set-Cookie': cookie('hub_device', token, b.on ? 400 * 86400 : 0) });
       }
+      if (demo && demo.reset && p === '/api/demo/reset' && req.method === 'POST') {
+        await service.call(tokenFrom(c, 'hub_session'), 'demo.resetCheck', {});
+        await demo.reset();
+        return json(200, { ok: true }, { 'Set-Cookie': cookie('hub_session', '', 0) });
+      }
       if (demo && p === '/api/demo/status' && req.method === 'GET') return json(200, { kiosk: !!tokenFrom(c, 'hub_device') });
       if (devReset && p === '/api/dev/reset' && req.method === 'POST') { await devReset(); return json(200, { ok: true }); }
       if (devReset && p === '/api/dev/tick' && req.method === 'POST') { const b = await body(req, MAX_BODY); return json(200, await devReset.tick(b)); }

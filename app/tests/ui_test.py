@@ -1021,6 +1021,29 @@ def t_mgr_home(browser, errors):
         return 'managers: Home (own report, points, team summary) -> dashboard / accounts'
 
 
+
+@test('U20 test copy: a full-access manager starts the sample data over from More (two taps); others cannot')
+def t_demo_reset(browser, errors):
+    with Server() as srv:
+        ctx, pg = new_page(browser, PHONE, errors)
+        login(pg, srv, 'E-104', shared=False)
+        r = pg.request.post(srv.base + 'api/demo/reset', headers={'X-Hub-Request': '1'}, data='{}')
+        assert r.status == 403, r.status
+        ctx.close()
+        http(srv.base, 'POST', '/api/dev/tick', {'advanceMinutes': 1440})           # the clock moves on a day
+        ctx, pg = new_page(browser, PHONE, errors)
+        login(pg, srv, 'E-101', shared=False)
+        pg.goto(srv.base + '#/more'); pg.wait_for_selector('[data-act=demo-reset]')
+        pg.click('[data-act=demo-reset]'); expect(pg.locator('[data-act=demo-reset]')).to_have_text('Tap again to start over')
+        pg.click('[data-act=demo-reset]')
+        pg.wait_for_selector('.portal-public, .login-card')
+        login(pg, srv, 'E-101', shared=False)
+        pg.goto(srv.base + '#/home'); pg.wait_for_selector('.portal-hero')
+        expect(pg.locator('.portal-hero')).to_contain_text('October 16')                 # back to the sample start
+        ctx.close()
+        return 'staff refused; full access resets with two taps; clock back to Oct 16'
+
+
 if __name__ == '__main__':
     with sync_playwright() as p:
         browser = p.chromium.launch()

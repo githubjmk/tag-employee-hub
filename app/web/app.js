@@ -1357,6 +1357,8 @@ function moreView() {
     <section class="card"><h2>${t('links')}</h2><div class="links">${[
       { label: { en: 'My Work (Order Manager)', es: 'Mi trabajo (Order Manager)' }, url: 'https://thearmoredgroup.quickbase.com/db/bf5ukkqy7', note: 'Quickbase sign-in' },
       { label: { en: 'Time clock (QuickBooks Time)', es: 'Reloj (QuickBooks Time)' }, url: 'https://quickbooks.intuit.com/time-tracking/', note: 'Intuit sign-in' }].map(linkCard)}</div></section>
+    ${isDemo() && can('accounts.manage') && !window.HUB_LOCAL ? html`<section class="card"><h2>Test copy: start the sample data over</h2><p class="hint">The test copy's clock keeps running, so the invented sample weeks age and alerts pile up. This puts every sample person, report and alert back to the start (Oct 16) and signs everyone out. The live Hub has no such button.</p>
+      <button class="btn" data-act="demo-reset">Start the sample data over</button></section>` : ''}
     <button class="btn wide" data-act="signout">${t('signout')}</button>`);
   if (passkeySupported() && !m.deviceId) renderPkList();
   if (!m.deviceId && !window.HUB_LOCAL) renderReminders();
@@ -1671,6 +1673,12 @@ root.addEventListener('click', async (ev) => {
     const on = el.getAttribute('aria-pressed') !== 'true';
     el.closest('form').querySelectorAll('input[name=newPin], input[name=confirmPin]').forEach(i => { i.type = on ? 'text' : 'password'; });
     el.setAttribute('aria-pressed', String(on)); el.textContent = t(on ? 'join_hide' : 'join_show'); return;
+  }
+  if (act === 'demo-reset') {
+    if (el.dataset.armed !== '1') { el.dataset.armed = '1'; el.textContent = 'Tap again to start over'; el.classList.add('danger'); return; }
+    el.disabled = true; el.textContent = 'Starting over…';
+    try { await api.demoReset(); } catch (e) { el.disabled = false; announce(errMsg(e)); return; }
+    S.me = null; S.pub = null; S.roster = undefined; S.guide = null; history.replaceState(null, '', '#/home'); announce('Sample data started over'); return route();
   }
   if (act === 'join-continue') { await loadMe(); document.body.classList.remove('plain'); return route(); }
   if (act === 'pk-login') {

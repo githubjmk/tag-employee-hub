@@ -31,6 +31,7 @@ export const api = {
   passkeyLogin: (payload) => request('POST', '/api/passkey/login', payload),
   invitePeek: (token) => request('GET', '/api/invite/' + encodeURIComponent(token)),
   inviteAccept: (payload) => request('POST', '/api/invite/accept', payload),
+  demoReset: () => request('POST', '/api/demo/reset', {}),
   logout: () => local() ? local().logout() : request('POST', '/api/logout', {}),
   call: (action, input) => local() ? local().call(action, input || {}) : request('POST', '/api/call/' + action, input || {}),
   async download(submissionId, format) {
