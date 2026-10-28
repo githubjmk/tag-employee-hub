@@ -1,44 +1,44 @@
 {
-  "ranAt": "2026-10-27T19:52:52-0700",
+  "ranAt": "2026-10-27T22:15:29-0700",
   "base": "http://127.0.0.1:8791/",
   "results": [
     {
       "name": "U1 end-to-end success flow (shared tablet staff -> management review -> safety -> verification -> employee record)",
       "ok": true,
-      "ms": 8601,
+      "ms": 8687,
       "detail": {
-        "submission": "SUB-D4A26F49F2",
+        "submission": "SUB-34776EB5BF",
         "tabletSignInToSubmittedSeconds": 2.6
       }
     },
     {
       "name": "U2 shared tablet: auto sign-out after submit, idle sign-out, nothing private left behind",
       "ok": true,
-      "ms": 26746,
+      "ms": 26365,
       "detail": "auto sign-out + idle sign-out verified"
     },
     {
       "name": "U3 Spanish employee on a 320px phone: full report, no horizontal scroll, axe clean",
       "ok": true,
-      "ms": 4829,
+      "ms": 4826,
       "detail": "es @320px ok"
     },
     {
       "name": "U4 accessibility: axe on every main screen (light + dark), phone and tablet",
       "ok": true,
-      "ms": 98614,
+      "ms": 99148,
       "detail": "92 screen checks"
     },
     {
       "name": "U5 keyboard only: sign in, complete, sign and submit without a pointer",
       "ok": true,
-      "ms": 2815,
+      "ms": 3001,
       "detail": "keyboard completion ok"
     },
     {
       "name": "U6 network failure during submit keeps the answers; retry is idempotent (one record)",
       "ok": true,
-      "ms": 5360,
+      "ms": 4992,
       "detail": {
         "attempts": 3
       }
@@ -52,28 +52,28 @@
     {
       "name": "U8 clarification loop: employee answers the question, management signs off, employee marks it seen",
       "ok": true,
-      "ms": 3833,
+      "ms": 3898,
       "detail": "clarification loop ok"
     },
     {
       "name": "U9 management adds an employee; the new person signs in on a phone with the temporary PIN, sets a PIN and signs the survey",
       "ok": true,
-      "ms": 6641,
+      "ms": 5728,
       "detail": {
         "newEmployeeId": "E-112",
-        "firstSignInToSignedSeconds": 3.0
+        "firstSignInToSignedSeconds": 2.1
       }
     },
     {
       "name": "U10 outside work hours: the weekly report waits for the next shift; safety reports still work",
       "ok": true,
-      "ms": 3186,
+      "ms": 3105,
       "detail": "closed window + safety report ok"
     },
     {
       "name": "U11 full-access manager: Restore & backup page; backup downloads a complete copy without sign-in secrets",
       "ok": true,
-      "ms": 3671,
+      "ms": 3624,
       "detail": {
         "restoreForm": "shown (Cloudflare runtime)",
         "backupSubmissions": 47
@@ -82,37 +82,37 @@
     {
       "name": "U12 open portal: no sign-in screen; the weekly report asks for the PIN once, at signing; phone remembers the ID; shop tablet shows names",
       "ok": true,
-      "ms": 7073,
+      "ms": 7086,
       "detail": "phone (typed ID, remembered) and shop tablet (name grid) both sign with one PIN entry"
     },
     {
       "name": "U13 Face ID: offered after signing with the PIN; portal greets the person and signs in with Face ID; the weekly report is signed with Face ID (no PIN); More lists phones; management removes them",
       "ok": true,
-      "ms": 10875,
+      "ms": 10887,
       "detail": "offer after PIN signing, portal Face ID sign-in, report signed with Face ID (record says passkey), PIN fallback, removal by management"
     },
     {
       "name": "U14 everyday polish: no browser translation; home-screen tip on phones; My weekly reports card; calmer badges; reminders on More; Admin switch",
       "ok": true,
-      "ms": 4320,
+      "ms": 4225,
       "detail": "translate off, manifest/icons/worker served, install tip + dismiss, My week card, no staff badge, reminders section, admin switch"
     },
     {
       "name": "U15 QuickBooks Time: full access links an account (suggestion needs a click); the person sees My hours on Home (sample hours in the test copy)",
       "ok": true,
-      "ms": 5298,
+      "ms": 5379,
       "detail": "linking via suggestion, My hours card (7 days, sample label), hidden when not linked"
     },
     {
       "name": "U16 guided phone setup: Home card -> home-screen step (moving picture) -> Face ID step (PIN, then approve) -> reminders step -> all set",
       "ok": true,
-      "ms": 3868,
+      "ms": 3887,
       "detail": "card -> 3 steps with moving pictures -> Face ID set up inside the guide -> all set; card gone afterwards"
     },
     {
       "name": "U17 onboarding email: manager adds a person with an email -> email preview (test copy sends nothing) -> link on a phone -> choose PIN -> guided setup; setup list updates",
       "ok": true,
-      "ms": 5207,
+      "ms": 5243,
       "detail": {
         "newEmployeeId": "E-112",
         "flow": "add with email -> preview -> link -> PIN -> guided setup; link works once"
@@ -121,31 +121,31 @@
     {
       "name": "U18 InnerPoints: full access links a person in Admin -> InnerPoints (suggestion needs a click) -> the person sees My InnerPoints on Home",
       "ok": true,
-      "ms": 5269,
+      "ms": 5326,
       "detail": "linked by a click in Admin; card on Home above My weekly reports; unlinked people see nothing"
     },
     {
       "name": "U19 management Home: managers land on Home with their own report, a Your team summary and the way into the dashboard",
       "ok": true,
-      "ms": 3764,
+      "ms": 3942,
       "detail": "managers: Home (own report, points, team summary) -> dashboard / accounts"
     },
     {
       "name": "U20 test copy: a full-access manager starts the sample data over from More (two taps); others cannot",
       "ok": true,
-      "ms": 5928,
+      "ms": 6511,
       "detail": "staff refused; full access resets with two taps; clock back to Oct 16"
     },
     {
       "name": "U21 company documents: staff see \"Please read and sign\" on Home, read the handbook and sign with the PIN; full access writes, previews and publishes a policy and sees who signed",
       "ok": true,
-      "ms": 4294,
+      "ms": 4353,
       "detail": "Home to-do -> read -> sign with PIN; manager: new -> save -> publish (two taps) -> who signed"
     },
     {
       "name": "U22 time off: staff request from Home (workdays and the 60-day hint shown), the manager sees it on Home, approves with who-else-is-off shown, the person sees Approved; My time has the team calendar",
       "ok": true,
-      "ms": 4469,
+      "ms": 4791,
       "detail": "request (3 workdays, 60-day hint) -> manager Home to-do -> approve -> Approved + calendar"
     }
   ]

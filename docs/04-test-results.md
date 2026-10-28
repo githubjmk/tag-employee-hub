@@ -243,3 +243,10 @@ New checks:
   - entering in-person requests and approving them at once;
   - staff calendar privacy.
 - Browser: 22/22 on the Node server and 22/22 on local Cloudflare, including U22 (request, then manager Home to-do, then approve, then Approved and the calendar).
+
+## Before go-live of R1.3 features (2026-10-27, commit cc8b3cc)
+- **Independent review:** two separate reviewers (server; web and HTTP) covered everything changed since the last live deploy. They found 1 high, 6 medium and 9 low issues. All were fixed and re-checked by the same reviewers, except two owner-policy items left as they are: signing documents outside work hours, and the registered-devices setting, which is off.
+- **API:** 90/90 (`npm test`).
+- **Browser:** 22/22 on the Node server and 22/22 on local Cloudflare (wrangler dev), on the final code.
+- **Upgrade:** a production-mode database made by the live version (d72afb3) started on the new code with no errors. New tables were created, the account was kept, `/api/demo/reset` returned 404, and documents required sign-in.
+- **Not tested:** real email delivery (needs `RESEND_API_KEY`) and real Quickbase/QuickBooks Time data (need `QB_TOKEN` / `QBT_TOKEN`).
