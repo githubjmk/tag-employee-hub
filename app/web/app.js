@@ -1724,7 +1724,7 @@ function renderDoc() {
   const canFace = pkReadyFor(S.me.employee.id) && !S.me.sharedDevice && !usePin;
   const manage = can('accounts.manage');
   const needSign = v.status === 'published' && v.ackRequired && !v.myAck;
-  if (needSign && canFace) prepareSignIn({ purpose: 'sign', action: 'doc.ack', content: docSignContent(v) });
+  if (needSign && canFace && (!v.signWindow || v.signWindow.openNow)) prepareSignIn({ purpose: 'sign', action: 'doc.ack', content: docSignContent(v) });
   render('#/docs', html`<a class="back" href="#/docs">${icon('back')} ${t('doc_title')}</a>
     ${v.status === 'draft' ? html`<p class="alert-soft" role="note"><strong>${t('doc_draft_banner')}</strong></p>` : ''}
     <article class="doc">
@@ -1735,6 +1735,7 @@ function renderDoc() {
     </article>
     ${v.status === 'published' && v.ackRequired ? (v.myAck
       ? html`<section class="card doc-signed"><p class="success-inline">${icon('check')} ${t('doc_you_signed')} ${fmtDT(v.myAck.signedAt)}${/passkey/.test(v.myAck.method) ? ' · Face ID' : ''}</p></section>`
+      : v.signWindow && !v.signWindow.openNow ? html`<section class="card doc-sign-later"><h2>${t('doc_sign_h')}</h2><p>${t('doc_sign_hours').replace('{h}', v.signWindow.hours)}</p><p><strong>${t('closed_next')} ${fmtDT(v.signWindow.nextOpen)}</strong></p></section>`
       : html`<form class="card emphasis doc-sign" data-form="docack" novalidate>
         <h2>${t('doc_sign_h')}</h2>
         <p class="consent-text">${v.ackStatement[lang]}</p>

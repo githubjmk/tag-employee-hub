@@ -2510,7 +2510,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   const versionView = (ctx, v) => ({ versionId: v.id, documentId: v.document_id, status: v.status, version: v.version_label, effectiveDate: v.effective_date,
     title: { en: v.title_en, es: v.title_es || null }, body: { en: v.body_en, es: v.body_es || null }, ackRequired: !!v.ack_required,
     ackStatement: { en: ackText(v, 'en'), es: ackText(v, 'es') }, ackCustom: { en: v.ack_statement_en || '', es: v.ack_statement_es || '' },
-    contentSha256: v.status === 'draft' ? docHash(v) : v.content_sha256, publishedAt: v.published_at, updatedAt: v.updated_at,
+    contentSha256: v.status === 'draft' ? docHash(v) : v.content_sha256, publishedAt: v.published_at, updatedAt: v.updated_at, signWindow: surveyWindow(),
     category: (db.get('SELECT category FROM documents WHERE id=?', [v.document_id]) || {}).category,
     myAck: (() => { const a = myAck(v.id, ctx.me.id); return a ? { signedAt: a.signed_at, language: a.language, method: JSON.parse(a.identity_json).method } : null; })() });
   A['docs.get'] = (ctx, { documentId, versionId } = {}) => {
@@ -2533,6 +2533,8 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     const d = db.get('SELECT * FROM documents WHERE id=?', [v.document_id]);
     if (d.archived_at) throw notFound();
     if (!v.ack_required) throw bad('This document does not need a signature.', 'no_ack');
+    // Owner 2026-10-27 ("yes same rule"): like the weekly report, documents are signed at work, on paid time.
+    if (cfg.surveyDuringWorkHoursOnly && !isWithinWorkingHours(now(), tz)) throw new HubError(409, 'outside_work_hours', `Company documents are signed during work hours (${WORK_HOURS_TEXT}), so it is always on paid time.`);
     if (input.contentSha256 !== v.content_sha256) throw new HubError(409, 'doc_changed', 'The document changed. Open it again before signing.');
     const lang = input.language === 'es' ? 'es' : 'en';
     if (myAck(v.id, ctx.me.id)) return { ok: true, already: true, signedAt: myAck(v.id, ctx.me.id).signed_at };

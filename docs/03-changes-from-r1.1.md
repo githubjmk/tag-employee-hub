@@ -283,3 +283,4 @@ Two independent reviewers (server; web and HTTP) went over everything changed si
   - a published version can no longer be turned back into a draft (database trigger);
   - managers only see waiting requests of their own people in "also off";
   - ending time off early now notifies the person or their manager.
+- Owner 2026-10-27: (1) only one full-access account, so self-approval of own time off stays; (2) "yes same rule": company documents are signed during work hours only (paid time), like the weekly report; reading is not blocked.

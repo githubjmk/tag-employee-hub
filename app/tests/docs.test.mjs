@@ -63,6 +63,14 @@ test('DOC-02 signing with the PIN: box and right PIN needed, only the text shown
   assert.throws(() => db.run("UPDATE document_acks SET signed_at='2020-01-01' WHERE employee_id='E-104'"), /append-only/);
   assert.throws(() => db.run("DELETE FROM document_acks WHERE employee_id='E-104'"), /append-only/);
   assert.ok(db.get("SELECT 1 FROM audit_events WHERE action='doc.acknowledged' AND actor_id='E-104'"));
+  // Owner rule: signed during work hours only (paid time), like the weekly report.
+  await signIn('E-105');
+  const v5 = await call('E-105', 'docs.get', { documentId: hb.id });
+  at('2026-10-17T03:00:00Z');                     // Friday 8 PM Pacific
+  await signIn('E-105');
+  assert.equal((await call('E-105', 'docs.get', { documentId: hb.id })).signWindow.openNow, false);
+  await rejects(call('E-105', 'docs.ack', { versionId: v5.versionId, contentSha256: v5.contentSha256, language: 'en', affirm: true, signPin: PIN['E-105'] }), 409, 'outside_work_hours');
+  at('2026-10-16T17:40:00Z');
 });
 
 test('DOC-03 a new version: copied from the published one, published with a check of the text, old one retired; everyone signs again; earlier signatures kept', async () => {
