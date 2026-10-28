@@ -234,3 +234,12 @@ New checks:
   - archive and restore;
   - the size limit.
 - Browser: 21/21 on the Node server and 21/21 on local Cloudflare, including U21 (Home to-do, then read, then sign with PIN; manager: new, save, publish with two taps, then who has signed).
+
+## Time off and My time (2026-10-27)
+- API: 89/89, including TO-01…TO-04. These cover:
+  - date checks, overlaps, and the person's manager being told;
+  - deciding by their manager or full access only, never their own, with a note required to decline and who else is off shown;
+  - approved days excusing the weekly report, and cancelling bringing it back, with no medical reason stored;
+  - entering in-person requests and approving them at once;
+  - staff calendar privacy.
+- Browser: 22/22 on the Node server and 22/22 on local Cloudflare, including U22 (request, then manager Home to-do, then approve, then Approved and the calendar).
