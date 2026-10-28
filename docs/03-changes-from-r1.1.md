@@ -254,3 +254,6 @@ Added after you sent the paper source: the signed record's heading now matches t
 
 ## Test copy: start the sample data over (2026-10-27)
 - More → "Start the sample data over" (test copy only, full-access managers, two taps). It puts the invented data and the demo clock back to Oct 16 and signs everyone out. The live Hub has no such button: the server refuses unless the copy is the demo.
+
+## Company documents (owner 2026-10-27: "1")
+- Handbook and policies with versions and Face ID or PIN acknowledgments; see `12-company-documents.md`.

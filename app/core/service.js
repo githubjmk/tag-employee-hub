@@ -376,7 +376,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   // The passkey approval is bound to the exact content being signed: the page asks for a
   // challenge for these fields, the phone signs it, and the server re-computes the hash here.
   // weekId is the week of the report actually being signed (from its assignment, never from the page).
-  const SIGN_BIND = { 'survey.submit': ['weekId', 'answers', 'language', 'esignConsent'], 'survey.amend': ['submissionId', 'note', 'corrections', 'language'] };
+  const SIGN_BIND = { 'survey.submit': ['weekId', 'answers', 'language', 'esignConsent'], 'survey.amend': ['submissionId', 'note', 'corrections', 'language'], 'doc.ack': ['versionId', 'contentSha256', 'language'] };
   const bindHash = (action, src) => crypto.sha256(canonical({ action, ...Object.fromEntries((SIGN_BIND[action] || []).map(k => [k, src[k] ?? null])) }));
   async function requireSignature(ctx, input, action) {
     const { affirm, signPin, signTicket } = input;
@@ -1057,7 +1057,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
       .filter(r => r.state === 'clarification_requested' || (r.recent && r.lastSignoff && !r.employeeSeen));
     const safety = db.all("SELECT id, type, status, created_at FROM safety_reports WHERE reporter_id=? AND (status != 'closed' OR closed_at >= ?) ORDER BY created_at DESC LIMIT 5",
       [ctx.me.id, new Date(now().getTime() - 14 * 86400000).toISOString()]);
-    return { greetingName: ctx.me.display_name.split(' ')[0], surveys, reviewItems: myReviewItems, safety, links: LINKS, reviewer: nameOf(ctx.me.supervisor_id) };
+    return { greetingName: ctx.me.display_name.split(' ')[0], surveys, reviewItems: myReviewItems, safety, links: LINKS, reviewer: nameOf(ctx.me.supervisor_id), pendingDocs: pendingDocsFor(ctx.me.id) };
   };
 
   A['survey.template'] = (ctx, { assignmentId }) => {
@@ -2299,6 +2299,200 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     return { ok: true, linkedTo: { id: u.id, name: u.name } };
   };
 
+  // ---------------------------------------------------------------- company documents (R1.3, owner 2026-10-27)
+  // Handbook, policies and other documents. A full-access manager writes a draft, then publishes it;
+  // a published version never changes (a change is a new version, and everyone signs again). Each
+  // active person acknowledges a version once with their PIN or Face ID. The Hub keeps the exact
+  // text, its fingerprint and who signed when; it does not write policy.
+  const DOC_CATS = ['handbook', 'policy', 'safety', 'benefits', 'other'];
+  const DOC_MAX = 200000;
+  const DEFAULT_ACK = {
+    en: 'I received {title} (version {v}, effective {d}). I have read it, and I can ask my supervisor about anything I do not understand.',
+    es: 'Recibí {title} (versión {v}, vigente desde {d}). La leí y puedo preguntar a mi supervisor sobre cualquier cosa que no entienda.'
+  };
+  const docVer = (vid) => db.get('SELECT * FROM document_versions WHERE id=?', [String(vid || '')]);
+  const docLive = (did) => db.get("SELECT * FROM document_versions WHERE document_id=? AND status='published'", [did]);
+  const docDraft = (did) => db.get("SELECT * FROM document_versions WHERE document_id=? AND status='draft'", [did]);
+  const docHash = (v) => crypto.sha256(canonical({ document: v.document_id, version: v.version_label, effective: v.effective_date || null, title_en: v.title_en, title_es: v.title_es || null, body_en: v.body_en, body_es: v.body_es || null, ack_required: !!v.ack_required, ack_en: v.ack_statement_en || null, ack_es: v.ack_statement_es || null }));
+  const ackText = (v, lang) => {
+    const es = lang === 'es';
+    const tpl = (es ? v.ack_statement_es : v.ack_statement_en) || (es ? DEFAULT_ACK.es : DEFAULT_ACK.en);
+    const title = (es && v.title_es) || v.title_en;
+    const d = v.effective_date ? new Intl.DateTimeFormat(es ? 'es-US' : 'en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' }).format(new Date(v.effective_date + 'T12:00:00Z')) : (es ? 'su publicación' : 'publication');
+    return tpl.replace(/\{title\}/g, title).replace(/\{v\}/g, v.version_label).replace(/\{d\}/g, d);
+  };
+  const myAck = (vid, eid) => db.get('SELECT signed_at, language, identity_json FROM document_acks WHERE version_id=? AND employee_id=?', [vid, eid]);
+  // Documents waiting for this person's signature (published, needs a signature, not signed yet).
+  const pendingDocsFor = (eid) => db.all(`SELECT v.id, v.document_id, v.title_en, v.title_es, v.version_label, v.published_at FROM document_versions v JOIN documents d ON d.id=v.document_id
+      WHERE v.status='published' AND v.ack_required=1 AND d.archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM document_acks a WHERE a.version_id=v.id AND a.employee_id=?) ORDER BY v.published_at`, [eid])
+    .map(v => ({ versionId: v.id, documentId: v.document_id, title: { en: v.title_en, es: v.title_es || null }, version: v.version_label }));
+  const docSummary = (ctx, d) => {
+    const live = docLive(d.id), draft = has(ctx, 'hr') ? docDraft(d.id) : null;
+    const v = live || draft;
+    if (!v) return null;
+    const out = { id: d.id, category: d.category, archived: !!d.archived_at, title: { en: v.title_en, es: v.title_es || null },
+      published: live ? { versionId: live.id, version: live.version_label, effectiveDate: live.effective_date, publishedAt: live.published_at, ackRequired: !!live.ack_required, myAck: (myAck(live.id, ctx.me.id) || {}).signed_at || null } : null,
+      draft: draft ? { versionId: draft.id, version: draft.version_label, updatedAt: draft.updated_at } : null };
+    if (live && live.ack_required && any(ctx, 'supervisor', 'hr')) {
+      const people = ackScope(ctx);
+      const signed = db.all('SELECT employee_id FROM document_acks WHERE version_id=?', [live.id]).map(r => r.employee_id);
+      out.published.signedCount = people.filter(p => signed.includes(p.id)).length; out.published.peopleCount = people.length;
+    }
+    return out;
+  };
+  // Whose signatures a manager can see: full access everyone; a manager their direct reports (and themselves).
+  const ackScope = (ctx) => db.all("SELECT id, display_name, supervisor_id, start_date FROM employees WHERE status='active' ORDER BY display_name", [])
+    .filter(e => has(ctx, 'hr') || e.supervisor_id === ctx.me.id || e.id === ctx.me.id);
+  A['docs.list'] = (ctx) => {
+    const docs = db.all('SELECT * FROM documents WHERE archived_at IS NULL ORDER BY created_at', []).map(d => docSummary(ctx, d)).filter(x => x && (x.published || has(ctx, 'hr')));
+    const archived = has(ctx, 'hr') ? db.all('SELECT * FROM documents WHERE archived_at IS NOT NULL ORDER BY archived_at DESC', []).map(d => ({ id: d.id, category: d.category, archivedAt: d.archived_at, title: (() => { const v = db.get('SELECT title_en, title_es FROM document_versions WHERE document_id=? ORDER BY created_at DESC LIMIT 1', [d.id]); return v ? { en: v.title_en, es: v.title_es } : { en: d.id }; })() })) : [];
+    return { docs, archived, pending: pendingDocsFor(ctx.me.id), canManage: has(ctx, 'hr') };
+  };
+  const versionView = (ctx, v) => ({ versionId: v.id, documentId: v.document_id, status: v.status, version: v.version_label, effectiveDate: v.effective_date,
+    title: { en: v.title_en, es: v.title_es || null }, body: { en: v.body_en, es: v.body_es || null }, ackRequired: !!v.ack_required,
+    ackStatement: { en: ackText(v, 'en'), es: ackText(v, 'es') }, ackCustom: { en: v.ack_statement_en || '', es: v.ack_statement_es || '' },
+    contentSha256: v.status === 'draft' ? docHash(v) : v.content_sha256, publishedAt: v.published_at, updatedAt: v.updated_at,
+    category: (db.get('SELECT category FROM documents WHERE id=?', [v.document_id]) || {}).category,
+    myAck: (() => { const a = myAck(v.id, ctx.me.id); return a ? { signedAt: a.signed_at, language: a.language, method: JSON.parse(a.identity_json).method } : null; })() });
+  A['docs.get'] = (ctx, { documentId, versionId } = {}) => {
+    if (versionId) {
+      const v = docVer(versionId); if (!v) throw notFound();
+      if (v.status !== 'published' && !has(ctx, 'hr')) throw notFound();
+      const d = db.get('SELECT * FROM documents WHERE id=?', [v.document_id]);
+      if (d.archived_at && !has(ctx, 'hr')) throw notFound();
+      return versionView(ctx, v);
+    }
+    const d = db.get('SELECT * FROM documents WHERE id=?', [String(documentId || '')]);
+    if (!d || (d.archived_at && !has(ctx, 'hr'))) throw notFound();
+    const v = docLive(d.id) || (has(ctx, 'hr') ? docDraft(d.id) : null);
+    if (!v) throw notFound();
+    return versionView(ctx, v);
+  };
+  A['docs.ack'] = async (ctx, input = {}) => {
+    const v = docVer(input.versionId);
+    if (!v || v.status !== 'published') throw new HubError(409, 'doc_not_current', 'This version is no longer the current one. Open the document again.');
+    const d = db.get('SELECT * FROM documents WHERE id=?', [v.document_id]);
+    if (d.archived_at) throw notFound();
+    if (!v.ack_required) throw bad('This document does not need a signature.', 'no_ack');
+    if (input.contentSha256 !== v.content_sha256) throw new HubError(409, 'doc_changed', 'The document changed. Open it again before signing.');
+    const lang = input.language === 'es' ? 'es' : 'en';
+    if (myAck(v.id, ctx.me.id)) return { ok: true, already: true, signedAt: myAck(v.id, ctx.me.id).signed_at };
+    const sig = await requireSignature(ctx, { ...input, language: lang }, 'doc.ack');
+    const aid = id('ACK'), n = nowIso(), statement = ackText(v, lang);
+    tx(() => {
+      if (myAck(v.id, ctx.me.id)) return;
+      db.run('INSERT INTO document_acks (id, version_id, employee_id, signed_at, language, statement, content_sha256, identity_json) VALUES (?,?,?,?,?,?,?,?)',
+        [aid, v.id, ctx.me.id, n, lang, statement, v.content_sha256, JSON.stringify(identityRecord(ctx, sig))]);
+      audit(ctx.me.id, 'doc.acknowledged', 'document_version', v.id, { documentId: v.document_id, version: v.version_label, contentSha256: v.content_sha256, method: sig.passkey ? 'passkey' : 'pin' });
+    });
+    return { ok: true, signedAt: myAck(v.id, ctx.me.id).signed_at };
+  };
+  const clip = (x, max = DOC_MAX) => { const t = String(x ?? '').replace(/\r\n?/g, '\n'); if (t.length > max) throw bad(`Too long (over ${Math.round(max / 1000)}k characters).`, 'too_long'); return t; };
+  A['docs.saveDraft'] = (ctx, input = {}) => {
+    if (!has(ctx, 'hr')) throw deny('Only a full-access manager can write company documents.');
+    const title_en = clip(input.titleEn, 160).trim(); if (!title_en) throw bad('Give the document a title.', 'title');
+    const body_en = clip(input.bodyEn).trim(); if (!body_en) throw bad('The English text is empty.', 'body');
+    const fields = { title_en, title_es: clip(input.titleEs, 160).trim() || null, body_en, body_es: clip(input.bodyEs).trim() || null,
+      version_label: clip(input.version, 20).trim() || '1', effective_date: /^\d{4}-\d{2}-\d{2}$/.test(String(input.effectiveDate || '')) ? input.effectiveDate : null,
+      ack_required: input.ackRequired === false ? 0 : 1, ack_statement_en: clip(input.ackEn, 800).trim() || null, ack_statement_es: clip(input.ackEs, 800).trim() || null };
+    const category = DOC_CATS.includes(input.category) ? input.category : 'policy';
+    const n = nowIso();
+    let did = input.documentId ? String(input.documentId) : null, vid;
+    tx(() => {
+      if (did) {
+        const d = db.get('SELECT * FROM documents WHERE id=?', [did]); if (!d) throw notFound();
+        db.run('UPDATE documents SET category=? WHERE id=?', [category, did]);
+      } else {
+        did = id('DOC');
+        db.run('INSERT INTO documents (id, category, created_by, created_at) VALUES (?,?,?,?)', [did, category, ctx.me.id, n]);
+      }
+      const draft = docDraft(did);
+      if (draft) {
+        vid = draft.id;
+        db.run('UPDATE document_versions SET title_en=?, title_es=?, body_en=?, body_es=?, version_label=?, effective_date=?, ack_required=?, ack_statement_en=?, ack_statement_es=?, updated_at=? WHERE id=?',
+          [fields.title_en, fields.title_es, fields.body_en, fields.body_es, fields.version_label, fields.effective_date, fields.ack_required, fields.ack_statement_en, fields.ack_statement_es, n, vid]);
+      } else {
+        vid = id('DV');
+        db.run(`INSERT INTO document_versions (id, document_id, status, version_label, effective_date, title_en, title_es, body_en, body_es, ack_required, ack_statement_en, ack_statement_es, created_by, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [vid, did, 'draft', fields.version_label, fields.effective_date, fields.title_en, fields.title_es, fields.body_en, fields.body_es, fields.ack_required, fields.ack_statement_en, fields.ack_statement_es, ctx.me.id, n, n]);
+      }
+      audit(ctx.me.id, 'doc.draft_saved', 'document_version', vid, { documentId: did });
+    });
+    return { documentId: did, versionId: vid };
+  };
+  A['docs.newDraft'] = (ctx, { documentId }) => {   // start a new version from the published one
+    if (!has(ctx, 'hr')) throw deny();
+    const d = db.get('SELECT * FROM documents WHERE id=?', [String(documentId || '')]); if (!d) throw notFound();
+    const existing = docDraft(d.id); if (existing) return { documentId: d.id, versionId: existing.id };
+    const live = docLive(d.id); if (!live) throw notFound();
+    const vid = id('DV'), n = nowIso();
+    const next = /^\d+$/.test(live.version_label) ? String(Number(live.version_label) + 1) : live.version_label + '.1';
+    tx(() => {
+      db.run(`INSERT INTO document_versions (id, document_id, status, version_label, effective_date, title_en, title_es, body_en, body_es, ack_required, ack_statement_en, ack_statement_es, created_by, created_at, updated_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [vid, d.id, 'draft', next, null, live.title_en, live.title_es, live.body_en, live.body_es, live.ack_required, live.ack_statement_en, live.ack_statement_es, ctx.me.id, n, n]);
+      audit(ctx.me.id, 'doc.draft_started', 'document_version', vid, { documentId: d.id, from: live.id });
+    });
+    return { documentId: d.id, versionId: vid };
+  };
+  A['docs.discardDraft'] = (ctx, { versionId }) => {
+    if (!has(ctx, 'hr')) throw deny();
+    const v = docVer(versionId); if (!v || v.status !== 'draft') throw notFound();
+    tx(() => {
+      db.run('DELETE FROM document_versions WHERE id=?', [v.id]);
+      const left = db.get('SELECT COUNT(*) n FROM document_versions WHERE document_id=?', [v.document_id]).n;
+      if (!left) db.run('DELETE FROM documents WHERE id=?', [v.document_id]);
+      audit(ctx.me.id, 'doc.draft_discarded', 'document_version', v.id, { documentId: v.document_id });
+    });
+    return { ok: true, documentGone: !db.get('SELECT 1 FROM documents WHERE id=?', [v.document_id]) };
+  };
+  A['docs.publish'] = (ctx, { versionId, contentSha256 }) => {
+    if (!has(ctx, 'hr')) throw deny('Only a full-access manager can publish company documents.');
+    const v = docVer(versionId); if (!v || v.status !== 'draft') throw notFound();
+    const hash = docHash(v);
+    if (contentSha256 && contentSha256 !== hash) throw new HubError(409, 'doc_changed', 'The draft changed since you opened it. Check it again before publishing.');
+    const n = nowIso();
+    const d = db.get('SELECT * FROM documents WHERE id=?', [v.document_id]);
+    tx(() => {
+      db.run("UPDATE document_versions SET status='retired', retired_at=? WHERE document_id=? AND status='published'", [n, v.document_id]);
+      db.run("UPDATE document_versions SET status='published', content_sha256=?, published_by=?, published_at=? WHERE id=?", [hash, ctx.me.id, n, v.id]);
+      if (d.archived_at) db.run('UPDATE documents SET archived_at=NULL WHERE id=?', [d.id]);
+      audit(ctx.me.id, 'doc.published', 'document_version', v.id, { documentId: v.document_id, version: v.version_label, contentSha256: hash, ackRequired: !!v.ack_required });
+      if (v.ack_required) for (const e of db.all("SELECT id FROM employees WHERE status='active'", []))
+        if (e.id !== ctx.me.id) queueNotification(e.id, { kind: 'document', ref: v.document_id, subject: `Please read and sign: ${v.title_en}${v.title_es ? ' / ' + v.title_es : ''}`, channels: ['in_app'], hold: false });
+    });
+    return { ok: true, versionId: v.id, contentSha256: hash };
+  };
+  A['docs.archive'] = (ctx, { documentId, restore }) => {
+    if (!has(ctx, 'hr')) throw deny();
+    const d = db.get('SELECT * FROM documents WHERE id=?', [String(documentId || '')]); if (!d) throw notFound();
+    tx(() => { db.run('UPDATE documents SET archived_at=? WHERE id=?', [restore ? null : nowIso(), d.id]); audit(ctx.me.id, restore ? 'doc.restored' : 'doc.archived', 'document', d.id, {}); });
+    return { ok: true };
+  };
+  A['docs.status'] = (ctx, { versionId }) => {
+    if (!any(ctx, 'supervisor', 'hr')) throw deny();
+    const v = docVer(versionId); if (!v || v.status === 'draft') throw notFound();
+    const acks = db.all('SELECT employee_id, signed_at, language, identity_json FROM document_acks WHERE version_id=?', [v.id]);
+    const people = ackScope(ctx);
+    return { versionId: v.id, documentId: v.document_id, title: { en: v.title_en, es: v.title_es }, version: v.version_label, status: v.status, publishedAt: v.published_at, contentSha256: v.content_sha256,
+      signed: people.filter(p => acks.some(a => a.employee_id === p.id)).map(p => { const a = acks.find(x => x.employee_id === p.id); return { id: p.id, name: p.display_name, signedAt: a.signed_at, language: a.language, faceId: /passkey/.test(JSON.parse(a.identity_json).method) }; }),
+      waiting: v.status === 'published' ? people.filter(p => !acks.some(a => a.employee_id === p.id)).map(p => ({ id: p.id, name: p.display_name })) : [] };
+  };
+  // Test copy: invented sample documents so the screens can be tried (never the real handbook).
+  async function seedDemoDocs() {
+    if (!cfg.demo || db.get('SELECT 1 FROM documents LIMIT 1')) return;
+    const owner = db.get("SELECT id FROM employees WHERE status='active' AND roles LIKE '%hr%' ORDER BY id LIMIT 1");
+    if (!owner) return;
+    const me = emp(owner.id), ctx = { me, roles: rolesOf(me), session: { created_at: nowIso() } };
+    const hb = A['docs.saveDraft'](ctx, { category: 'handbook', version: '1', effectiveDate: ymdOf(now(), tz),
+      titleEn: 'Sample Employee Handbook (example only)', titleEs: 'Manual del empleado de ejemplo (solo de muestra)',
+      bodyEn: `# Welcome\nThis is an invented sample so you can try the Company documents screens. It is not the company handbook.\n\n## Work hours\n- Regular hours are Monday to Friday.\n- Clock in and out in QuickBooks Time.\n\n## Safety first\nIf you are not sure, **stop and ask**. Report hazards right away with the Hub's Safety button.\n\n## Questions\nAsk your supervisor about anything in this handbook.`,
+      bodyEs: `# Bienvenido\nEste es un ejemplo inventado para probar las pantallas de Documentos de la empresa. No es el manual de la empresa.\n\n## Horario\n- El horario regular es de lunes a viernes.\n- Marque su entrada y salida en QuickBooks Time.\n\n## La seguridad primero\nSi no está seguro, **pare y pregunte**. Reporte los peligros enseguida con el botón Seguridad del Portal.\n\n## Preguntas\nPregunte a su supervisor sobre cualquier cosa de este manual.` });
+    A['docs.publish'](ctx, { versionId: hb.versionId });
+    A['docs.saveDraft'](ctx, { category: 'policy', version: '1', titleEn: 'Sample: Phones at work (draft)', titleEs: 'Ejemplo: Teléfonos en el trabajo (borrador)',
+      bodyEn: 'An invented draft policy. Drafts are only visible to full-access managers until published.\n\n- Company apps (Employee Hub, QuickBooks Time, Order Manager) may be used on your own phone at work.',
+      bodyEs: 'Una política de ejemplo en borrador. Solo la gerencia con acceso completo ve los borradores hasta publicarlos.\n\n- Las apps de la empresa (Portal del empleado, QuickBooks Time, Order Manager) se pueden usar en su propio teléfono en el trabajo.' });
+  }
+
   // ---------------------------------------------------------------- InnerPoints (R1.3, owner 2026-10-27)
   // "It's such a large part of our workflow incentive that it should be there": each person sees
   // their own InnerPoints on Home, read-only from the Order Manager ledger in Quickbase. On by
@@ -2476,7 +2670,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   // The file carries the audit-chain head and its own SHA-256 so a copy can be checked later.
   const BACKUP_TABLES = ['employees', 'devices', 'esign_consents', 'absences', 'survey_assignments', 'survey_drafts', 'survey_submissions', 'survey_amendments',
     'supervisor_reviews', 'review_events', 'paper_events', 'safety_reports', 'safety_events', 'corrective_actions', 'ca_events', 'attachments', 'notifications',
-    'notification_attempts', 'audit_events', 'passkeys', 'qbt_links', 'employee_contacts', 'invites', 'ip_links'];
+    'notification_attempts', 'audit_events', 'passkeys', 'qbt_links', 'employee_contacts', 'invites', 'ip_links', 'documents', 'document_versions', 'document_acks'];
   const BACKUP_OMIT = { employees: ['pin_salt', 'pin_hash', 'setup_code_hash', 'setup_code_expires', 'setup_code_issued_by', 'totp_secret', 'totp_last_counter', 'failed_logins', 'locked_until', 'lockouts_24h', 'sim_fail_sms'], devices: ['token_hash'], passkeys: ['public_key_jwk', 'credential_id'], invites: ['token_hash'] };
   A['admin.backupExport'] = (ctx) => {
     if (!has(ctx, 'hr')) throw deny('Only a full-access manager can export a backup.');
@@ -2517,7 +2711,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     return n;
   }
 
-  return { call, login, logout, passkeyOptions, passkeyLogin, invitePeek, inviteAccept, ensurePushKeys, pushPublic, pushPending, pushTick, tick, sealLegacySecrets, recordRestores, publicInfo, kioskRoster, dispatchDue, deliveryReceipt, bootstrap, bootstrapStatus, bootstrapRecover, ensureAssignments, actions: Object.keys(A), config: cfg, _audit: audit, _serial: serial, _weekFor: weekFor };
+  return { call, login, logout, seedDemoDocs, passkeyOptions, passkeyLogin, invitePeek, inviteAccept, ensurePushKeys, pushPublic, pushPending, pushTick, tick, sealLegacySecrets, recordRestores, publicInfo, kioskRoster, dispatchDue, deliveryReceipt, bootstrap, bootstrapStatus, bootstrapRecover, ensureAssignments, actions: Object.keys(A), config: cfg, _audit: audit, _serial: serial, _weekFor: weekFor };
 }
 
 export const TYPE_LABEL = {

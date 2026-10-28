@@ -579,6 +579,7 @@ async function homeView() {
   const open = h.surveys.slice().reverse().find(x => ['open', 'missing'].includes(x.state));
   const todo = [];
   for (const r of h.reviewItems) todo.push(html`<a class="todo ${r.state === 'clarification_requested' ? 'urgent' : ''}" href="#/record/${r.submissionId}">${icon(r.state === 'clarification_requested' ? 'q' : 'check')}<span><strong>${r.state === 'clarification_requested' ? t('question_from') : t('review_title')}</strong><small>${t('week_of')} ${fmtDate(r.weekId)}</small></span><span class="go">${t('open')}</span></a>`);
+  for (const d of h.pendingDocs || []) todo.push(html`<a class="todo" href="#/docs/${d.documentId}">${icon('check')}<span><strong>${t('doc_please_sign_one')}</strong><small>${L(d.title) || d.title.en} · ${t('doc_version')} ${d.version}</small></span><span class="go">${t('open')}</span></a>`);
   const nowS = S.me.now;
   const surveyTile = open && !surveyOpen()
     ? html`<div class="big-action waiting">${icon('clock')}<span><strong>${t('home_survey')}</strong><small>${t('closed_title')} · ${t('closed_next')} <b>${fmtDT(S.me.surveyWindow.nextOpen)}</b> · ${untilText(S.me.surveyWindow.nextOpen, nowS)}</small></span></div>`
@@ -1320,7 +1321,7 @@ async function dashView(params) {
 const trendList = (arr) => arr.length ? html`<ul class="trend">${arr.map(x => html`<li><span>${x.label}</span><b>${x.n}</b></li>`)}</ul>` : html`<p class="meta">—</p>`;
 
 // ---------------------------------------------------------------- alerts, more, admin
-const refHref = (n) => n.kind === 'safety' || n.kind === 'safety_status' ? '#/safety/r/' + n.ref : n.kind === 'action' ? '#/actions' : (n.kind === 'review' || n.kind === 'clarification') ? '#/record/' + n.ref : n.kind === 'survey_open' ? '#/checkin' : '#/home';
+const refHref = (n) => n.kind === 'document' ? '#/docs/' + n.ref : n.kind === 'safety' || n.kind === 'safety_status' ? '#/safety/r/' + n.ref : n.kind === 'action' ? '#/actions' : (n.kind === 'review' || n.kind === 'clarification') ? '#/record/' + n.ref : n.kind === 'survey_open' ? '#/checkin' : '#/home';
 async function alertsView() {
   loadingView('#/more');
   const list = await call('alerts.mine', {});
@@ -1338,6 +1339,7 @@ function moreView() {
         <a class="card row link-row" href="#/actions">${icon('wrench')}<span class="grow">All corrective actions</span></a>
         ${can('accounts.manage') || can('accounts.pinReset.team') ? html`<a class="card row link-row" href="#/accounts">${icon('lock')}<span class="grow">${t('team_people')}</span></a>` : ''}` : ''}
       ${!m.deviceId ? html`<a class="card row link-row" href="#/getstarted">${icon('check')}<span class="grow">${t('gs_card_t')}</span></a>` : ''}
+      <a class="card row link-row" href="#/docs">${icon('check')}<span class="grow">${t('doc_title')}</span></a>
       <a class="card row link-row" href="#/alerts">${icon('bell')}<span class="grow">${t('alerts_title')}</span>${unseen ? html`<b class="badge">${unseen}</b>` : ''}</a>
       ${!isStaff() ? html`<a class="card row link-row" href="#/safety">${icon('alert')}<span class="grow">${t('my_reports')}</span></a>` : ''}
       ${can('admin.delivery') || can('admin.integrity') ? html`<a class="card row link-row" href="#/admin">${icon('lock')}<span class="grow">Admin: questionnaire versions, alert delivery, integrity check</span></a>` : ''}
@@ -1582,6 +1584,144 @@ async function adminView(params) {
 }
 
 // ---------------------------------------------------------------- router
+
+// ---------------------------------------------------------------- company documents (R1.3, owner 2026-10-27)
+// Handbook and policies. Everyone reads the published version; a document that needs it is signed
+// once with Face ID or the PIN. Full-access managers write drafts, preview, publish and see who signed.
+const DOC_CAT = { handbook: 'doc_cat_handbook', policy: 'doc_cat_policy', safety: 'doc_cat_safety', benefits: 'doc_cat_benefits', other: 'doc_cat_other' };
+// Simple formatting: "# " heading, "## " subheading, "- " bullet, **bold**, blank line = new paragraph.
+function docBody(text) {
+  const esc = (x) => String(x).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const inline = (x) => esc(x).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  const out = []; let list = null, para = [];
+  const flush = () => { if (para.length) { out.push('<p>' + para.map(inline).join('<br>') + '</p>'); para = []; } if (list) { out.push('<ul>' + list.map(li => '<li>' + inline(li) + '</li>').join('') + '</ul>'); list = null; } };
+  for (const line of String(text || '').split('\n')) {
+    const l = line.trimEnd();
+    if (/^#\s+/.test(l)) { flush(); out.push('<h2>' + inline(l.replace(/^#\s+/, '')) + '</h2>'); }
+    else if (/^##+\s+/.test(l)) { flush(); out.push('<h3>' + inline(l.replace(/^##+\s+/, '')) + '</h3>'); }
+    else if (/^\s*[-*•]\s+/.test(l)) { if (para.length) { out.push('<p>' + para.map(inline).join('<br>') + '</p>'); para = []; } (list = list || []).push(l.replace(/^\s*[-*•]\s+/, '')); }
+    else if (!l.trim()) flush();
+    else { if (list) { out.push('<ul>' + list.map(li => '<li>' + inline(li) + '</li>').join('') + '</ul>'); list = null; } para.push(l.trim()); }
+  }
+  flush();
+  return raw(out.join(''));
+}
+const docTitle = (d) => L(d.title) || d.title.en;
+async function docsView() {
+  loadingView('#/docs');
+  const r = await call('docs.list', {});
+  const pendingIds = new Set(r.pending.map(p => p.versionId));
+  const row = (d) => {
+    const p = d.published;
+    const status = !p ? html`<span class="chip">${t('doc_draft_only')}</span>`
+      : !p.ackRequired ? html`<span class="meta">${t('doc_read_only')}</span>`
+      : p.myAck ? html`<span class="success-inline">✓ ${t('doc_signed')} ${fmtDate(p.myAck)}</span>`
+      : html`<span class="chip c-warn">${t('doc_to_sign')}</span>`;
+    return html`<a class="card row link-row doc-row ${p && pendingIds.has(p.versionId) ? 'pending' : ''}" href="#/docs/${d.id}">${icon('check')}<span class="grow"><strong>${docTitle(d)}</strong><small>${t(DOC_CAT[d.category])}${p ? html` · ${t('doc_version')} ${p.version}${p.effectiveDate ? html` · ${t('doc_effective')} ${fmtDate(p.effectiveDate)}` : ''}` : ''}${p && p.peopleCount ? html` · ${p.signedCount}/${p.peopleCount} ${t('doc_have_signed')}` : ''}${d.draft && r.canManage ? html` · <b>${t('doc_has_draft')}</b>` : ''}</small></span>${status}</a>`;
+  };
+  render('#/docs', html`<div class="row between wrap"><h1>${t('doc_title')}</h1>${r.canManage ? html`<a class="btn" href="#/docs/edit/new">${t('doc_new')}</a>` : ''}</div>
+    <p class="lede">${t('doc_lede')}</p>
+    ${r.pending.length ? html`<section class="card attention"><h2>${t('doc_please_sign')}</h2><div class="todo-list">${r.pending.map(p => html`<a class="todo" href="#/docs/${p.documentId}">${icon('check')}<span><strong>${L(p.title) || p.title.en}</strong><small>${t('doc_version')} ${p.version}</small></span><span class="go">${t('open')}</span></a>`)}</div></section>` : ''}
+    ${r.docs.length ? html`<div class="stack">${r.docs.map(row)}</div>` : html`<p class="empty-inline">${t('doc_none')}</p>`}
+    ${r.archived.length ? html`<details class="card"><summary>${t('doc_archived')} (${r.archived.length})</summary><ul class="plain-list">${r.archived.map(a => html`<li><span>${L(a.title) || a.title.en}</span><button class="btn-quiet" data-act="doc-restore" data-id="${a.id}">${t('doc_restore')}</button></li>`)}</ul></details>` : ''}`);
+}
+async function docView(documentId, versionId) {
+  loadingView('#/docs');
+  const v = await call('docs.get', versionId ? { versionId } : { documentId });
+  S.doc = { v, error: S.doc && S.doc.v && S.doc.v.versionId === v.versionId ? S.doc.error : null, usePin: S.doc && S.doc.v && S.doc.v.versionId === v.versionId ? S.doc.usePin : false };
+  renderDoc();
+}
+const docLang = (v) => (S.lang === 'es' && v.body.es) ? 'es' : 'en';
+const docSignContent = (v) => ({ versionId: v.versionId, contentSha256: v.contentSha256, language: docLang(v) });
+function renderDoc() {
+  const { v, error, usePin } = S.doc;
+  const lang = docLang(v);
+  const canFace = pkReadyFor(S.me.employee.id) && !S.me.sharedDevice && !usePin;
+  const manage = can('accounts.manage');
+  const needSign = v.status === 'published' && v.ackRequired && !v.myAck;
+  if (needSign && canFace) prepareSignIn({ purpose: 'sign', action: 'doc.ack', content: docSignContent(v) });
+  render('#/docs', html`<a class="back" href="#/docs">${icon('back')} ${t('doc_title')}</a>
+    ${v.status === 'draft' ? html`<p class="alert-soft" role="note"><strong>${t('doc_draft_banner')}</strong></p>` : ''}
+    <article class="doc">
+      <p class="eyebrow">${t(DOC_CAT[v.category] || 'doc_cat_other')} · ${t('doc_version')} ${v.version}${v.effectiveDate ? html` · ${t('doc_effective')} ${fmtDate(v.effectiveDate)}` : ''}</p>
+      <h1>${lang === 'es' && v.title.es ? v.title.es : v.title.en}</h1>
+      ${S.lang === 'es' && !v.body.es ? html`<p class="alert-soft" role="note">${t('doc_no_es')}</p>` : ''}
+      <div class="doc-body" lang="${lang}">${docBody(v.body[lang])}</div>
+    </article>
+    ${v.status === 'published' && v.ackRequired ? (v.myAck
+      ? html`<section class="card doc-signed"><p class="success-inline">${icon('check')} ${t('doc_you_signed')} ${fmtDT(v.myAck.signedAt)}${/passkey/.test(v.myAck.method) ? ' · Face ID' : ''}</p></section>`
+      : html`<form class="card emphasis doc-sign" data-form="docack" novalidate>
+        <h2>${t('doc_sign_h')}</h2>
+        <p class="consent-text">${v.ackStatement[lang]}</p>
+        <label class="check"><input type="checkbox" name="affirm" required><span>${t('doc_affirm')}</span></label>
+        ${error ? html`<p class="alert" role="alert">${error}</p>` : ''}
+        ${canFace ? html`<button type="button" class="btn primary wide pk-btn" data-act="doc-pk-sign">${icon('lock')} ${t('pk_sign')} ${methodName(S.lang)}</button><p class="pk-alt"><button type="button" class="link" data-act="doc-usepin">${t('pk_use_pin')}</button></p>`
+          : html`<label class="field"><span>${t('sign_pin')}</span><input id="docpin" name="signPin" type="password" inputmode="numeric" maxlength="12" autocomplete="off" required></label><button class="btn primary wide" type="submit">${t('doc_sign_btn')}</button>`}
+      </form>`) : ''}
+    ${manage || anyRole('supervisor', 'manager') ? html`<div class="row wrap doc-tools">
+      ${v.status !== 'draft' && v.ackRequired ? html`<a class="btn" href="#/docs/status/${v.versionId}">${t('doc_who_signed')}</a>` : ''}
+      ${manage ? html`<a class="btn" href="#/docs/edit/${v.status === 'draft' ? v.versionId : 'from/' + v.documentId}">${v.status === 'draft' ? t('doc_edit_draft') : t('doc_new_version')}</a>
+        ${v.status === 'published' ? html`<button class="btn-quiet" data-act="doc-archive" data-id="${v.documentId}">${t('doc_archive')}</button>` : ''}` : ''}</div>` : ''}`);
+}
+async function docAck(useFace, btn) {
+  const sd = S.doc, v = sd.v, form = root.querySelector('form[data-form="docack"]');
+  if (!form.elements.affirm.checked) { sd.error = t('doc_affirm_needed'); return renderDoc(); }
+  btn.disabled = true; btn.setAttribute('aria-busy', 'true');
+  try {
+    const content = docSignContent(v);
+    let extra;
+    if (useFace) { const r = await passkeySignIn({ purpose: 'sign', action: 'doc.ack', content, expectEmployeeId: S.me.employee.id }); S.me = await api.call('session.me', {}); extra = { signTicket: r.signTicket }; }
+    else extra = { signPin: form.elements.signPin.value };
+    await api.call('docs.ack', { ...content, affirm: true, ...extra });
+    sd.error = null; announce(t('doc_thanks'));
+    await loadMe(); return docView(v.documentId);
+  } catch (e) {
+    if (quiet(e)) return;
+    sd.error = useFace && cancelled(e) ? t('pk_cancelled') : errMsg(e);
+    if (useFace && e instanceof ApiError && ['passkey_unknown', 'passkey_other_person'].includes(e.code)) sd.usePin = true;
+    renderDoc(); announce(sd.error);
+  }
+}
+async function docStatusView(versionId) {
+  loadingView('#/docs');
+  const r = await call('docs.status', { versionId });
+  render('#/docs', html`<a class="back" href="#/docs/${r.documentId}">${icon('back')} ${L(r.title) || r.title.en}</a>
+    <h1>${t('doc_who_signed')}</h1><p class="lede">${L(r.title) || r.title.en} · ${t('doc_version')} ${r.version}${r.status === 'retired' ? ' · ' + t('doc_old_version') : ''}</p>
+    <div class="tiles compact">${raw(`<div class="tile"><b>${r.signed.length}</b><span>${t('doc_signed')}</span></div><div class="tile ${r.waiting.length ? 'warn' : ''}"><b>${r.waiting.length}</b><span>${t('doc_not_yet')}</span></div>`)}</div>
+    ${r.waiting.length ? html`<section class="card"><h2>${t('doc_not_yet')}</h2><ul class="plain-list">${r.waiting.map(p => html`<li><span>${p.name} <span class="meta">${p.id}</span></span></li>`)}</ul></section>` : ''}
+    <section class="card"><h2>${t('doc_signed')}</h2>${r.signed.length ? html`<ul class="plain-list">${r.signed.map(p => html`<li><span>${p.name} <span class="meta">${p.id}</span></span><span class="meta">${fmtDT(p.signedAt)} · ${p.language === 'es' ? 'Español' : 'English'}${p.faceId ? ' · Face ID' : ' · PIN'}</span></li>`)}</ul>` : html`<p class="meta">${t('doc_nobody')}</p>`}
+      <p class="fine">${t('doc_fingerprint')}: <code>${(r.contentSha256 || '').slice(0, 16)}…</code></p></section>`);
+}
+async function docEditView(arg, fromDoc) {
+  if (!can('accounts.manage')) return go('#/docs');
+  loadingView('#/docs');
+  let v = null;
+  if (fromDoc) { const r = await call('docs.newDraft', { documentId: fromDoc }); history.replaceState(null, '', '#/docs/edit/' + r.versionId); v = await call('docs.get', { versionId: r.versionId }); }
+  else if (arg && arg !== 'new') v = await call('docs.get', { versionId: arg });
+  const val = v || { title: { en: '', es: '' }, body: { en: '', es: '' }, version: '1', effectiveDate: '', ackRequired: true, ackCustom: { en: '', es: '' }, category: 'policy' };
+  render('#/docs', html`<a class="back" href="${v ? '#/docs/' + v.documentId : '#/docs'}">${icon('back')} ${t('doc_title')}</a>
+    <h1>${v ? t('doc_edit_draft') : t('doc_new')}</h1>
+    <p class="hint">${t('doc_edit_help')}</p>
+    <form data-form="docsave" data-doc="${v ? v.documentId : ''}" data-version-id="${v ? v.versionId : ''}" class="card doc-edit" novalidate>
+      <div class="row wrap gap">
+        <label class="field"><span>${t('doc_kind')}</span><select name="category">${Object.keys(DOC_CAT).map(k => html`<option value="${k}" ${val.category === k ? raw('selected') : ''}>${t(DOC_CAT[k])}</option>`)}</select></label>
+        <label class="field"><span>${t('doc_version')}</span><input name="version" value="${val.version}" maxlength="20" required></label>
+        <label class="field"><span>${t('doc_effective')}</span><input name="effectiveDate" type="date" value="${val.effectiveDate || ''}"></label>
+      </div>
+      <label class="field"><span>${t('doc_title_en')}</span><input name="titleEn" value="${val.title.en}" maxlength="160" required></label>
+      <label class="field"><span>${t('doc_title_es')}</span><input name="titleEs" value="${val.title.es || ''}" maxlength="160"></label>
+      <label class="field"><span>${t('doc_body_en')}</span><textarea name="bodyEn" rows="16" required>${val.body.en}</textarea></label>
+      <label class="field"><span>${t('doc_body_es')}</span><textarea name="bodyEs" rows="10">${val.body.es || ''}</textarea></label>
+      <label class="check"><input type="checkbox" name="ackRequired" ${val.ackRequired ? raw('checked') : ''}><span><strong>${t('doc_needs_sig')}</strong> ${t('doc_needs_sig_help')}</span></label>
+      <details><summary>${t('doc_custom_stmt')}</summary>
+        <p class="hint">${t('doc_custom_help')}</p>
+        <label class="field"><span>English</span><textarea name="ackEn" rows="3" maxlength="800">${val.ackCustom.en}</textarea></label>
+        <label class="field"><span>Español</span><textarea name="ackEs" rows="3" maxlength="800">${val.ackCustom.es}</textarea></label></details>
+      <div class="row wrap"><button class="btn primary" type="submit">${t('doc_save')}</button>${v ? html`<button type="button" class="btn-quiet" data-act="doc-discard" data-id="${v.versionId}">${t('doc_discard')}</button>` : ''}</div>
+    </form>
+    ${v ? html`<section class="card doc-publish"><h2>${t('doc_publish_h')}</h2><p>${t('doc_publish_help')}</p>
+      <div class="row wrap"><a class="btn" href="#/docs/v/${v.versionId}">${t('doc_preview')}</a><button class="btn primary" data-act="doc-publish" data-id="${v.versionId}" data-hash="${v.contentSha256}">${t('doc_publish')}</button></div></section>` : ''}`);
+}
 async function route() {
   navSeq++;
   const hash = location.hash || '#/home';
@@ -1625,6 +1765,12 @@ async function route() {
       case 'getstarted': S.guide = null; return await guideView();
       case 'admin': return await adminView(params);
       case 'accounts': return await accountsView();
+      case 'docs':
+        if (!parts[1]) return await docsView();
+        if (parts[1] === 'status') return await docStatusView(parts[2]);
+        if (parts[1] === 'edit') return parts[2] === 'from' ? await docEditView(null, parts[3]) : await docEditView(parts[2]);
+        if (parts[1] === 'v') return await docView(null, parts[2]);
+        return await docView(parts[1]);
       default: return go('#/home');
     }
   } catch (e) {
@@ -1673,6 +1819,25 @@ root.addEventListener('click', async (ev) => {
     const on = el.getAttribute('aria-pressed') !== 'true';
     el.closest('form').querySelectorAll('input[name=newPin], input[name=confirmPin]').forEach(i => { i.type = on ? 'text' : 'password'; });
     el.setAttribute('aria-pressed', String(on)); el.textContent = t(on ? 'join_hide' : 'join_show'); return;
+  }
+  if (act === 'doc-pk-sign') return docAck(true, el);
+  if (act === 'doc-usepin') { if (S.doc) { S.doc.usePin = true; S.doc.error = null; renderDoc(); root.querySelector('#docpin')?.focus(); } return; }
+  if (act === 'doc-publish') {
+    if (el.dataset.armed !== '1') { el.dataset.armed = '1'; el.textContent = t('doc_publish_confirm'); el.classList.add('danger'); return; }
+    el.disabled = true;
+    try { const f = root.querySelector('form[data-form="docsave"]'); const r = await call('docs.publish', { versionId: el.dataset.id, contentSha256: el.dataset.hash }); announce(t('doc_published')); const v = await call('docs.get', { versionId: r.versionId }); return go('#/docs/' + v.documentId); }
+    catch (e) { if (!quiet(e)) { el.disabled = false; announce(errMsg(e)); const p = document.createElement('p'); p.className = 'alert'; p.setAttribute('role', 'alert'); p.textContent = errMsg(e); el.closest('section').appendChild(p); } }
+    return;
+  }
+  if (act === 'doc-discard') {
+    if (el.dataset.armed !== '1') { el.dataset.armed = '1'; el.textContent = t('doc_discard_confirm'); return; }
+    try { const r = await call('docs.discardDraft', { versionId: el.dataset.id }); announce(t('doc_discarded')); return go('#/docs'); } catch (e) { if (!quiet(e)) announce(errMsg(e)); }
+    return;
+  }
+  if (act === 'doc-archive' || act === 'doc-restore') {
+    if (act === 'doc-archive' && el.dataset.armed !== '1') { el.dataset.armed = '1'; el.textContent = t('doc_archive_confirm'); return; }
+    try { await call('docs.archive', { documentId: el.dataset.id, restore: act === 'doc-restore' }); return go('#/docs'); } catch (e) { if (!quiet(e)) announce(errMsg(e)); }
+    return;
   }
   if (act === 'demo-reset') {
     if (el.dataset.armed !== '1') { el.dataset.armed = '1'; el.textContent = 'Tap again to start over'; el.classList.add('danger'); return; }
@@ -1876,6 +2041,15 @@ root.addEventListener('submit', async (ev) => {
     try { S.pkReg = await startRegister({ signPin: f.signPin.value, totp: f.totp ? f.totp.value : undefined }); rerenderPkSetup(); document.querySelector('#pk-setup [data-act=pk-create]')?.focus(); }
     catch (e) { if (e instanceof ApiError && e.status === 401 && ['no_session', 'expired', 'locked'].includes(e.code)) return wipe(e.message); rerenderPkSetup(errMsg(e)); }
     return;
+  }
+  if (kind === 'docack') return docAck(false, btn);
+  if (kind === 'docsave') {
+    btn.disabled = true;
+    try {
+      const r = await call('docs.saveDraft', { documentId: form.dataset.doc || undefined, category: f.category.value, version: f.version.value, effectiveDate: f.effectiveDate.value,
+        titleEn: f.titleEn.value, titleEs: f.titleEs.value, bodyEn: f.bodyEn.value, bodyEs: f.bodyEs.value, ackRequired: f.ackRequired.checked, ackEn: f.ackEn.value, ackEs: f.ackEs.value });
+      announce(t('doc_saved')); history.replaceState(null, '', '#/docs/edit/' + r.versionId); return docEditView(r.versionId);
+    } catch (e) { if (quiet(e)) return; return fail(e); }
   }
   if (kind === 'sign') return submitSurvey(form, btn);
   if (kind === 'qsign') return quickSubmit(form, btn);

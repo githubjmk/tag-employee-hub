@@ -1044,6 +1044,45 @@ def t_demo_reset(browser, errors):
         return 'staff refused; full access resets with two taps; clock back to Oct 16'
 
 
+
+@test('U21 company documents: staff see "Please read and sign" on Home, read the handbook and sign with the PIN; full access writes, previews and publishes a policy and sees who signed')
+def t_docs(browser, errors):
+    with Server() as srv:
+        ctx, pg = new_page(browser, PHONE, errors)
+        kim = srv.person('E-106')
+        login(pg, srv, 'E-106', shared=False)
+        pg.goto(srv.base + '#/home'); pg.wait_for_selector('.attention a[href^="#/docs/"]')
+        pg.click('.attention a[href^="#/docs/"]'); pg.wait_for_selector('article.doc h1')
+        expect(pg.locator('article.doc h1')).to_contain_text('Sample Employee Handbook')
+        expect(pg.locator('.doc-body h2').first).to_be_visible()
+        axe(pg, 'document reader'); no_hscroll(pg, 'document reader'); shot(pg, 'u21-01-read')
+        pg.click('form[data-form=docack] button[type=submit]')                      # no box, no PIN
+        expect(pg.locator('form[data-form=docack] .alert')).to_be_visible()
+        pg.check('form[data-form=docack] input[name=affirm]'); pg.fill('#docpin', kim['pin'])
+        pg.click('form[data-form=docack] button[type=submit]')
+        pg.wait_for_selector('.doc-signed'); shot(pg, 'u21-02-signed')
+        pg.goto(srv.base + '#/home'); pg.wait_for_selector('.big-actions')
+        expect(pg.locator('.attention a[href^="#/docs/"]')).to_have_count(0)
+        ctx.close()
+        ctx, pg = new_page(browser, TABLET, errors)
+        login(pg, srv, 'E-101', shared=False)
+        pg.goto(srv.base + '#/docs'); pg.wait_for_selector('.doc-row')
+        expect(pg.locator('.doc-row')).to_have_count(2)                           # published sample + draft
+        pg.click('a[href="#/docs/edit/new"]'); pg.wait_for_selector('form[data-form=docsave]')
+        pg.fill('input[name=titleEn]', 'Phones at work'); pg.fill('input[name=titleEs]', 'Telefonos en el trabajo')
+        pg.fill('textarea[name=bodyEn]', '# Phones\n- Company apps are allowed on your own phone.\n- **Safety first.**')
+        pg.click('form[data-form=docsave] button[type=submit]'); pg.wait_for_selector('[data-act=doc-publish]')
+        axe(pg, 'document editor'); shot(pg, 'u21-03-editor')
+        pg.click('[data-act=doc-publish]'); expect(pg.locator('[data-act=doc-publish]')).to_have_text('Tap again to publish')
+        pg.click('[data-act=doc-publish]'); pg.wait_for_selector('article.doc h1:has-text("Phones at work")')
+        expect(pg.locator('.doc-body li strong')).to_have_text('Safety first.')
+        pg.click('a[href^="#/docs/status/"]'); pg.wait_for_selector('main h1:has-text("Who has signed")')
+        expect(pg.locator('main')).to_contain_text('Not signed yet')
+        shot(pg, 'u21-04-status')
+        ctx.close()
+        return 'Home to-do -> read -> sign with PIN; manager: new -> save -> publish (two taps) -> who signed'
+
+
 if __name__ == '__main__':
     with sync_playwright() as p:
         browser = p.chromium.launch()

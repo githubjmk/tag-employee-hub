@@ -23,6 +23,7 @@ export async function createHub({ demoNow = process.env.HUB_DEMO_NOW || DEMO_NOW
   await service.sealLegacySecrets();
   await service.ensurePushKeys();
   clock.runFrom(demoNow === 'real' ? new Date() : demoNow);
+  await service.seedDemoDocs();   // invented sample documents (demo only)
   let timer = null;
   if (autoTick) timer = setInterval(() => service.tick().catch(e => console.error('[hub] tick failed:', e.message)), 15000);
   return { db, clock, crypto, service, stop: () => clearInterval(timer) };

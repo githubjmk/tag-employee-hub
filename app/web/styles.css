@@ -639,3 +639,19 @@ form.one-q .opt input:checked + span { animation: picked .28s ease-out; }
 .team-card h2 { margin: 0; }
 .tiles.compact { margin: 8px 0 12px; }
 .tiles.compact .tile b { font-size: 1.4rem; }
+
+/* Company documents */
+.doc-row small { display: block; color: var(--ink-2); }
+.doc-row.pending { border-left: 4px solid var(--gold); }
+.doc { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px 18px 8px; margin: 10px 0 14px; }
+.doc h1 { margin-top: 2px; }
+.doc-body { font-size: 1.02rem; line-height: 1.65; max-width: 70ch; }
+.doc-body h2 { font-size: 1.2rem; margin: 22px 0 6px; padding-top: 12px; border-top: 1px solid var(--line); }
+.doc-body h3 { font-size: 1.05rem; margin: 16px 0 4px; }
+.doc-body ul { padding-left: 22px; margin: 6px 0 12px; }
+.doc-body li { margin: 3px 0; }
+.doc-sign h2 { margin-top: 0; }
+.doc-tools { margin: 6px 0 16px; }
+.doc-edit textarea { width: 100%; font: inherit; font-size: .95rem; line-height: 1.5; }
+.doc-edit .row.gap { gap: 10px; }
+.doc-edit .row.gap .field { flex: 1 1 140px; }

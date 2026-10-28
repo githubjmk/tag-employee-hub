@@ -76,6 +76,51 @@ CREATE TABLE IF NOT EXISTS qbt_links (
   linked_by TEXT NOT NULL,
   linked_at TEXT NOT NULL
 );
+-- Company documents, R1.3 (owner 2026-10-27): handbook, policies and other documents, each with
+-- versions. A published version never changes; a change is a new version. When a version needs an
+-- acknowledgment, every active person signs it once (PIN or Face ID), and signatures are append-only.
+CREATE TABLE IF NOT EXISTS documents (
+  id TEXT PRIMARY KEY,
+  category TEXT NOT NULL CHECK (category IN ('handbook','policy','safety','benefits','other')),
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  archived_at TEXT
+);
+CREATE TABLE IF NOT EXISTS document_versions (
+  id TEXT PRIMARY KEY,
+  document_id TEXT NOT NULL REFERENCES documents(id),
+  status TEXT NOT NULL CHECK (status IN ('draft','published','retired')),
+  version_label TEXT NOT NULL,
+  effective_date TEXT,
+  title_en TEXT NOT NULL,
+  title_es TEXT,
+  body_en TEXT NOT NULL,
+  body_es TEXT,
+  ack_required INTEGER NOT NULL DEFAULT 1,
+  ack_statement_en TEXT,
+  ack_statement_es TEXT,
+  content_sha256 TEXT,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  published_by TEXT,
+  published_at TEXT,
+  retired_at TEXT
+);
+CREATE INDEX IF NOT EXISTS document_versions_doc ON document_versions (document_id, status);
+CREATE TABLE IF NOT EXISTS document_acks (
+  id TEXT PRIMARY KEY,
+  version_id TEXT NOT NULL REFERENCES document_versions(id),
+  employee_id TEXT NOT NULL REFERENCES employees(id),
+  signed_at TEXT NOT NULL,
+  language TEXT NOT NULL,
+  statement TEXT NOT NULL,
+  content_sha256 TEXT NOT NULL,
+  identity_json TEXT NOT NULL,
+  UNIQUE (version_id, employee_id)
+);
+CREATE TRIGGER IF NOT EXISTS document_acks_no_update BEFORE UPDATE ON document_acks BEGIN SELECT RAISE(ABORT, 'document_acks is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS document_acks_no_delete BEFORE DELETE ON document_acks BEGIN SELECT RAISE(ABORT, 'document_acks is append-only'); END;
 -- InnerPoints link, R1.3: which Order Manager (Quickbase) employee record each Hub account is
 -- (set by management, never guessed). Read-only use: "My InnerPoints" on Home.
 CREATE TABLE IF NOT EXISTS ip_links (

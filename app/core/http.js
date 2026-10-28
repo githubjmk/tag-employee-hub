@@ -151,7 +151,7 @@ export function createHttpHandler({ service, secureCookies = false, demo = null,
       const m = /^\/api\/call\/([a-zA-Z.]+)$/.exec(p);
       if (m && req.method === 'POST') {
         const action = m[1];
-        const b = await body(req, action === 'attachment.add' ? MAX_UPLOAD_BODY : MAX_BODY);
+        const b = await body(req, ['attachment.add', 'docs.saveDraft'].includes(action) ? MAX_UPLOAD_BODY : MAX_BODY);
         const result = await service.call(tokenFrom(c, 'hub_session'), action, b, { rp });
         if (action === 'device.register') {
           // The device token never reaches page script: it becomes an HttpOnly cookie on this browser.
