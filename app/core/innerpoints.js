@@ -24,15 +24,16 @@ export function makeInnerPoints({ fetch, token, realm = QB_REALM }) {
   if (!token) return null;
   async function query(where, select) {
     const out = [];
-    for (let skip = 0, page = 0; page < 10; page++) {
+    for (let skip = 0, page = 0; page < 5; page++) {
       let r;
       try {
         r = await fetch(QB_API + '/records/query', {
           method: 'POST',
           headers: { 'QB-Realm-Hostname': realm, Authorization: 'QB-USER-TOKEN ' + token, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ from: IP_TABLE, select, where, sortBy: [{ fieldId: IPF.at, order: 'DESC' }], options: { skip, top: 1000 } })
+          body: JSON.stringify({ from: IP_TABLE, select, where, sortBy: [{ fieldId: IPF.at, order: 'DESC' }], options: { skip, top: 1000 } }),
+          signal: AbortSignal.timeout(8000)
         });
-      } catch { throw new IpError('ip_network', 'Could not reach Quickbase.'); }
+      } catch { throw new IpError('ip_network', 'Could not reach Quickbase (no answer within 8 seconds).'); }
       if (r.status === 401 || r.status === 403) throw new IpError('ip_auth', 'Quickbase refused the token (expired, removed, or no access to the Order Manager). Create a new user token and update QB_TOKEN.');
       if (r.status === 429) throw new IpError('ip_rate', 'Quickbase asked the Hub to slow down. Try again in a minute.');
       if (r.status < 200 || r.status >= 300) throw new IpError('ip_http', 'Quickbase answered HTTP ' + r.status + '.');

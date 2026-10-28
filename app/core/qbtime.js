@@ -17,7 +17,7 @@ export function makeQbTime({ fetch, token, base = QBT_BASE }) {
     const url = new URL(base + path);
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
     let r;
-    try { r = await fetch(url.toString(), { method: 'GET', headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' } }); }
+    try { r = await fetch(url.toString(), { method: 'GET', headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }, signal: AbortSignal.timeout(8000) }); }
     catch { throw new QbtError('qbt_network', 'Could not reach QuickBooks Time.'); }
     if (r.status === 401 || r.status === 403) throw new QbtError('qbt_auth', 'QuickBooks Time refused the access token (expired or removed). Create a new token and update QBT_TOKEN.');
     if (r.status === 429) throw new QbtError('qbt_rate', 'QuickBooks Time asked the Hub to slow down. Try again in a minute.');
@@ -27,7 +27,7 @@ export function makeQbTime({ fetch, token, base = QBT_BASE }) {
   // QuickBooks Time pages results ("more": true); 200 per page is the maximum.
   async function all(path, params, key) {
     const out = [];
-    for (let page = 1; page <= 50; page++) {
+    for (let page = 1; page <= 10; page++) {
       const j = await get(path, { ...params, page, limit: 200 });
       const items = j && j.results && j.results[key] ? Object.values(j.results[key]) : [];
       out.push(...items);

@@ -349,7 +349,9 @@ function setPinView(msg) {
 // ---------------------------------------------------------------- welcome page from an invite (email or QR)
 async function joinView(token, msg) {
   document.body.classList.add('plain');
-  let p; try { p = await api.invitePeek(token); } catch (e) { p = { valid: false }; }
+  let p; try { p = token ? await api.invitePeek(token) : { valid: false }; } catch (e) { p = { valid: false }; }
+  let signedInAs = null;
+  if (p.valid) { try { const me = await api.call('session.me', {}); if (me && me.employee && me.employee.id !== p.employeeId) signedInAs = me.employee.name; } catch { /* not signed in */ } }
   if (p.language && !S.joinLangSet) { S.lang = p.language === 'es' ? 'es' : 'en'; document.documentElement.lang = S.lang; S.joinLangSet = true; }
   const card = (inner) => { root.innerHTML = String(html`<main id="main" class="login" tabindex="-1"><div class="login-card join-card">
     <div class="login-brand logo-top"><img class="login-logo" src="${IS_LOGO_NAVY}" alt="Innerspace Cases" width="337" height="124"></div>${inner}
@@ -360,6 +362,7 @@ async function joinView(token, msg) {
     <p class="join-lead">${t('join_lead')} <strong>${t('join_count').replace('{n}', steps.length)}</strong></p>
     <ol class="join-steps">${steps.map(([k, ic], i) => html`<li class="${i === 0 ? 'now' : ''}"><span class="js-num" aria-hidden="true">${i + 1}</span><span class="js-ic" aria-hidden="true">${ic === 'face' ? FACE_IC : icon(ic)}</span><span class="js-label">${t('join_s_' + k)}</span>${i === 0 ? html`<span class="chip c-open">${t('join_now_tag')}</span>` : ''}</li>`)}</ol>
     ${msg ? html`<p class="alert" role="alert" tabindex="-1">${msg}</p>` : ''}
+    ${signedInAs ? html`<p class="alert-soft" role="note">${t('join_signed_in').replace('{n}', signedInAs)}</p>` : ''}
     <form data-form="join" data-token="${token}" class="join-form" novalidate>
       <h2 class="h3">${t('join_now')}</h2>
       <div class="pin-demo" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><b>✓</b></div>
@@ -1198,7 +1201,7 @@ function accountForm(a, managers) {
     <label class="check"><input type="checkbox" name="fullAccess" ${v.fullAccess ? raw('checked') : ''}><span><strong>Full access</strong> (Management only): every employee's surveys and employee accounts</span></label>
     <label class="check"><input type="checkbox" name="safetyContact" ${v.safetyContact ? raw('checked') : ''}><span><strong>Safety contact</strong> (Management only): gets urgent safety alerts and escalations</span></label>
     <label class="field"><span>Mobile number for urgent safety texts (Management only, optional)</span><input name="smsPhone" inputmode="tel" autocomplete="off" value="${v.smsPhone && v.smsPhone !== 'on file' ? v.smsPhone : ''}" placeholder="818-555-0142"></label>
-    ${isNew ? html`<label class="check"><input type="checkbox" name="sendInvite" checked><span><strong>Send the welcome email now</strong> (if an email is filled in). It has a one-time link to choose a PIN and set up the phone.</span></label>` : ''}
+    ${isNew ? html`<label class="check"><input type="checkbox" name="sendInvite" checked><span><strong>Send the welcome email now</strong> (staff, if an email is filled in). It has a one-time link to choose a PIN and set up the phone. Management accounts are set up in person.</span></label>` : ''}
     <button class="btn primary" type="submit">${isNew ? 'Create account' : 'Save changes'}</button></form>`;
 }
 // Setup list: where each person is in onboarding.
@@ -1233,8 +1236,8 @@ async function accountsView() {
         · reports to ${a.reportsToName || '—'} · ${a.pinSet ? 'PIN set' : a.tempPinPending ? 'temporary PIN not used yet' : 'no PIN'}${a.locked ? html` · <span class="bad">locked</span>` : ''}${a.role === 'management' ? (a.mfaEnrolled ? ' · authenticator set up' : html` · <span class="bad">no authenticator</span>`) : ''}${a.safetyContact ? (a.smsPhone ? ' · texts on' : html` · <span class="warn">no mobile number for urgent texts</span>`) : ''}${a.passkeys ? html` · Face ID on ${a.passkeys} phone${a.passkeys > 1 ? 's' : ''}` : ''}</p></div></div>
     ${a.status === 'active' && a.onboarding ? setupStatus(a) : ''}
     ${a.id !== S.me.employee.id && a.status === 'active' && (admin || (a.role === 'staff' && a.reportsTo === S.me.employee.id)) ? html`<div class="row-actions">
-      ${a.email ? html`<button class="btn" data-act="invite-email" data-id="${a.id}">${icon('bell')} ${a.onboarding && a.onboarding.invite ? 'Send a new welcome email' : 'Send welcome email'}</button>` : ''}
-      <button class="btn-quiet" data-act="invite-qr" data-id="${a.id}">Show invite QR code</button></div>` : ''}
+      ${a.role === 'staff' && !a.pinSet ? html`${a.email ? html`<button class="btn" data-act="invite-email" data-id="${a.id}">${icon('bell')} ${a.onboarding && a.onboarding.invite ? 'Send a new welcome email' : 'Send welcome email'}</button>` : ''}
+      <button class="btn-quiet" data-act="invite-qr" data-id="${a.id}">Show invite QR code</button>` : ''}</div>` : ''}
     ${a.id !== S.me.employee.id && a.status === 'active' ? html`<div class="row-actions">
       ${admin || (a.role === 'staff' && a.reportsTo === S.me.employee.id) ? html`<form data-form="setupcode" data-id="${a.id}"><button class="btn" type="submit">Reset PIN</button></form>` : ''}
       ${admin && a.role === 'management' ? html`<form data-form="enrolltotp" data-id="${a.id}"><button class="btn-quiet" type="submit">Reset authenticator</button></form>` : ''}
@@ -1811,7 +1814,11 @@ async function route() {
   const parts = pathPart.split('/').filter(Boolean);
   const params = new URLSearchParams(query);
   await loadConfig();
-  if (parts[0] === 'join' && parts[1]) return joinView(parts[1]);
+  if (parts[0] === 'join') {
+    // The link's code is kept in memory only, and taken out of the address bar and history right away.
+    if (parts[1]) { S.joinToken = parts[1]; history.replaceState(null, '', '#/join'); }
+    return joinView(S.joinToken || '');
+  }
   if (!S.me) {
     // Signed out: the portal and the weekly report are open; everything else asks for ID + PIN.
     let me = null;
@@ -2123,7 +2130,7 @@ root.addEventListener('submit', async (ev) => {
     btn.disabled = true;
     try {
       const r = await api.inviteAccept({ token: form.dataset.token, newPin: f.newPin.value, confirmPin: f.confirmPin.value });
-      S.me = null; history.replaceState(null, '', '#/getstarted');
+      S.me = null; S.joinToken = null; history.replaceState(null, '', '#/getstarted');
       if (r.mfa) return joinMfaView(r.mfa);
       await loadMe(); document.body.classList.remove('plain'); return route();
     } catch (e) { return joinView(form.dataset.token, errMsg(e)); }
@@ -2243,7 +2250,7 @@ root.addEventListener('submit', async (ev) => {
       if (kind === 'acreate') {
         const r = await call('accounts.create', { ...input, employeeId: f.employeeId.value.trim() || undefined, startDate: f.startDate.value });
         let inv = null, invErr = null;
-        if (f.sendInvite.checked && f.email.value.trim()) { try { inv = await call('invite.create', { employeeId: r.account.id, send: true }); } catch (e) { if (quiet(e)) return; invErr = errMsg(e); } }
+        if (f.sendInvite.checked && f.email.value.trim() && input.role === 'staff') { try { inv = await call('invite.create', { employeeId: r.account.id, send: true }); } catch (e) { if (quiet(e)) return; invErr = errMsg(e); } }
         EMP = null; await accountsView();
         const box = document.getElementById('acct-' + r.account.id)?.querySelector('.acct-out');
         if (box) {

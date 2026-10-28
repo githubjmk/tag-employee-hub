@@ -108,6 +108,13 @@ CREATE TABLE IF NOT EXISTS document_versions (
   retired_at TEXT
 );
 CREATE INDEX IF NOT EXISTS document_versions_doc ON document_versions (document_id, status);
+CREATE TRIGGER IF NOT EXISTS document_versions_locked BEFORE UPDATE ON document_versions WHEN OLD.status != 'draft' AND (
+  NEW.title_en IS NOT OLD.title_en OR NEW.title_es IS NOT OLD.title_es OR NEW.body_en IS NOT OLD.body_en OR NEW.body_es IS NOT OLD.body_es OR
+  NEW.version_label IS NOT OLD.version_label OR NEW.effective_date IS NOT OLD.effective_date OR NEW.ack_required IS NOT OLD.ack_required OR
+  NEW.ack_statement_en IS NOT OLD.ack_statement_en OR NEW.ack_statement_es IS NOT OLD.ack_statement_es OR NEW.content_sha256 IS NOT OLD.content_sha256 OR
+  NEW.document_id IS NOT OLD.document_id OR NEW.published_at IS NOT OLD.published_at OR (OLD.status = 'retired' AND NEW.status != 'retired'))
+BEGIN SELECT RAISE(ABORT, 'published document versions cannot be changed'); END;
+CREATE TRIGGER IF NOT EXISTS document_versions_no_delete BEFORE DELETE ON document_versions WHEN OLD.status != 'draft' BEGIN SELECT RAISE(ABORT, 'published document versions cannot be deleted'); END;
 CREATE TABLE IF NOT EXISTS document_acks (
   id TEXT PRIMARY KEY,
   version_id TEXT NOT NULL REFERENCES document_versions(id),

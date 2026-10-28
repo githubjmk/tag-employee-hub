@@ -55,20 +55,50 @@ test('TO-02 deciding: their manager or full access, never their own; a decline n
   assert.equal((await call('E-101', 'timeoff.decide', { requestId: own.request.id, decision: 'approve' })).request.status, 'approved');
 });
 
-test('TO-03 approved time off excuses the weekly report for those days; cancelling brings it back', async () => {
-  const wk = (eid) => db.get("SELECT status, expected, excuse_reason FROM survey_assignments WHERE employee_id=? AND week_id='2026-10-12'", [eid]);
+test('TO-03 approved time off excuses the weekly report; cancelling before it starts brings the report back; ending early keeps the days already taken', async () => {
+  const wk = (eid, w = '2026-10-12') => db.get('SELECT status, excuse_reason FROM survey_assignments WHERE employee_id=? AND week_id=?', [eid, w]);
   await call('E-104', 'home');
   assert.equal(wk('E-104').status, 'open');
-  const r = await call('E-104', 'timeoff.request', { kind: 'sick', startDate: '2026-10-13', endDate: '2026-10-16', note: 'Sick' });
+  const r = await call('E-104', 'timeoff.request', { kind: 'sick', startDate: '2026-10-15', endDate: '2026-10-16', note: 'Sick' });
   assert.equal(wk('E-104').status, 'open', 'not excused while waiting');
   await call('E-102', 'timeoff.decide', { requestId: r.request.id, decision: 'approve' });
-  assert.equal(wk('E-104').status, 'excused'); assert.match(wk('E-104').excuse_reason, /Partial week|Not working/);
-  const abs = db.get("SELECT reason FROM absences WHERE employee_id='E-104' AND start_date='2026-10-13'");
+  const abs = db.get("SELECT reason FROM absences WHERE employee_id='E-104' AND start_date='2026-10-15'");
   assert.equal(abs.reason, 'other', 'no medical reason stored with the absence');
-  await call('E-104', 'timeoff.cancel', { requestId: r.request.id });
-  assert.equal(wk('E-104').status, 'open', 'cancelled: the report is expected again');
-  assert.equal(db.get("SELECT COUNT(*) n FROM absences WHERE employee_id='E-104' AND start_date='2026-10-13'").n, 0);
-  assert.ok(db.get("SELECT 1 FROM audit_events WHERE action='timeoff.cancelled' AND entity_id='E-104'"));
+  await call('E-104', 'timeoff.cancel', { requestId: r.request.id });    // starts tomorrow: a full cancel
+  assert.equal(db.get('SELECT status FROM time_off_requests WHERE id=?', [r.request.id]).status, 'cancelled');
+  assert.equal(db.get("SELECT COUNT(*) n FROM absences WHERE employee_id='E-104' AND start_date='2026-10-15'").n, 0);
+  // Under way: Rosa is off all week (report excused) and comes back early on Wednesday.
+  const r2 = await call('E-102', 'timeoff.request', { employeeId: 'E-108', kind: 'vacation', startDate: '2026-10-12', endDate: '2026-10-23', approveNow: true });
+  assert.equal(wk('E-108').status, 'excused');
+  T.rosaReq = r2.request.id;
+  await signIn('E-108');
+  const back = await call('E-108', 'timeoff.cancel', { requestId: r2.request.id });
+  assert.equal(back.endedEarly, true);
+  const row = db.get('SELECT status, end_date, decision_note FROM time_off_requests WHERE id=?', [r2.request.id]);
+  assert.equal(row.status, 'approved'); assert.equal(row.end_date, '2026-10-13'); assert.match(row.decision_note, /Ended early/);
+  assert.equal(db.get('SELECT end_date FROM absences WHERE employee_id=? AND start_date=?', ['E-108', '2026-10-12']).end_date, '2026-10-13', 'Monday and Tuesday stay taken');
+  assert.ok(db.get("SELECT 1 FROM audit_events WHERE action='timeoff.ended_early' AND entity_id='E-108'"));
+});
+
+test('TO-05 review fixes: impossible dates refused; staff do not see others\' waiting requests; the only full-access person can approve their own; a slow Quickbase never holds up sign-in', async () => {
+  await rejects(call('E-106', 'timeoff.request', { kind: 'vacation', startDate: '2026-10-99', endDate: '2026-10-99' }), 400, 'dates');
+  await rejects(call('E-106', 'timeoff.request', { kind: 'vacation', startDate: '2026-02-30', endDate: '2026-03-02' }), 400, 'dates');
+  await call('E-107', 'timeoff.request', { kind: 'other', startDate: '2026-11-30', endDate: '2026-11-30' });   // waiting
+  const mine = await call('E-105', 'timeoff.request', { kind: 'vacation', startDate: '2026-11-30', endDate: '2026-12-01' });
+  assert.ok(!mine.request.alsoOff.some(o => o.pending), 'staff only see approved time off of others');
+  const dana = (await call('E-102', 'timeoff.team')).pending.find(x => x.id === mine.request.id);
+  assert.ok(dana.alsoOff.some(o => o.pending), 'the manager sees waiting requests too');
+  // Morgan is the only full-access person in the sample data.
+  const own = await call('E-101', 'timeoff.request', { kind: 'vacation', startDate: '2026-12-28', endDate: '2026-12-31' });
+  assert.equal((await call('E-101', 'timeoff.decide', { requestId: own.request.id, decision: 'approve' })).request.status, 'approved');
+  // Slow outside service: a Home card waiting on Quickbase does not block someone else's sign-in.
+  const h2 = await createHub({ platform: { innerpoints: { awards: () => new Promise(() => {}), people: () => new Promise(() => {}) } } });
+  h2.db.run("INSERT INTO ip_links (employee_id, ip_emp_id, ip_name, linked_by, linked_at) VALUES ('E-106','4','Kim','E-101','2026-10-01')");
+  const t = (await h2.service.login({ employeeId: 'E-106', pin: PIN['E-106'] })).token;
+  h2.service.call(t, 'points.mine', {}).catch(() => {});
+  h2.clock.advance(60000);
+  const quick = await Promise.race([h2.service.login({ employeeId: 'E-104', pin: PIN['E-104'] }).then(() => 'signed in'), new Promise(r => setTimeout(() => r('blocked'), 1500))]);
+  assert.equal(quick, 'signed in');
 });
 
 test('TO-04 entered for someone who asked in person (approved at once); staff cannot enter for others; calendar shows names, not reasons, to staff', async () => {

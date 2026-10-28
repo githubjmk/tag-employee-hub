@@ -260,3 +260,22 @@ Added after you sent the paper source: the signed record's heading now matches t
 
 ## Time off and My time (owner 2026-10-27: "ok")
 - Requests in the Hub (in person still possible), manager decides, team calendar, and approved days excuse the weekly report. See `13-time-off.md`.
+
+## Security review fixes (2026-10-27)
+Two independent reviewers (server; web and HTTP) went over everything changed since the last live deploy. Fixed:
+- **Welcome links:**
+  - only for staff who have not chosen a PIN; management is set up in person;
+  - re-checked when used: the inviter must still be allowed, and the person must not be locked, promoted or already set up;
+  - links are cancelled on a role or manager change, PIN reset, authenticator reset and hard lock;
+  - accepting never unlocks an account and removes old Face ID phones;
+  - the link code is sent in the request body and taken out of the address bar;
+  - a warning shows when the browser is signed in as someone else.
+- **Time off:**
+  - managers see the kind only for their own people;
+  - staff no longer see others' waiting requests;
+  - impossible dates are refused;
+  - cancelling leave that is under way ends it early and keeps the days already taken;
+  - the only full-access person can approve their own.
+- **Documents:** published versions are locked in the database, and publishing requires the text fingerprint.
+- **Outside services:** Quickbase, QuickBooks Time and Resend calls time out (8-10 s), failures are remembered for a minute, and Home cards that wait on them no longer hold up sign-in or signing.
+- **Other:** stricter email format; staff see a plain message if InnerPoints are unavailable.

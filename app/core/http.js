@@ -133,16 +133,17 @@ export function createHttpHandler({ service, secureCookies = false, demo = null,
         return json(200, { ok: true, employee: r.employee, idleMinutes: r.idleMinutes, signTicket: r.signTicket, sharedDevice: false }, { 'Set-Cookie': cookie('hub_session', r.token, 12 * 3600) });
       }
       // Onboarding invite (welcome email or QR code): who it is for, then choose the PIN.
-      const inv = /^\/api\/invite\/([a-f0-9]{64})$/.exec(p);
-      if (inv && req.method === 'GET') {
+      // The token travels in the request body, never in a URL that servers log (review 2026-10-27).
+      if (p === '/api/invite/peek' && req.method === 'POST') {
         if (rateLimited('invite:' + clientKey, 30, 60000)) throw new HubError(429, 'rate', 'Too many attempts. Wait a minute.');
-        return json(200, service.invitePeek(inv[1]));
+        const b = await body(req, MAX_BODY);
+        return json(200, service.invitePeek(String(b.token || '')));
       }
       if (p === '/api/invite/accept' && req.method === 'POST') {
         if (rateLimited('invite:' + clientKey, 30, 60000)) throw new HubError(429, 'rate', 'Too many attempts. Wait a minute.');
         const b = await body(req, MAX_BODY);
         const r = await service.inviteAccept({ token: String(b.token || ''), newPin: b.newPin, confirmPin: b.confirmPin, deviceToken: tokenFrom(c, 'hub_device') });
-        return json(200, { ok: true, employee: r.employee, idleMinutes: r.idleMinutes, mfa: r.mfa }, { 'Set-Cookie': cookie('hub_session', r.token, 12 * 3600) });
+        return json(200, { ok: true, employee: r.employee, idleMinutes: r.idleMinutes, mfa: r.mfa }, r.token ? { 'Set-Cookie': cookie('hub_session', r.token, 12 * 3600) } : {});
       }
       if (p === '/api/logout' && req.method === 'POST') {
         await service.logout(tokenFrom(c, 'hub_session'));

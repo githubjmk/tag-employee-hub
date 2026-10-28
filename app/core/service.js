@@ -352,7 +352,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
       const n = now();
       lockedUntil = new Date(n.getTime() + LOGIN_POLICY.lockMinutes * 60000).toISOString();
       lockouts = lockouts.filter(t => n - new Date(t) < 86400000).concat(n.toISOString());
-      if (lockouts.length >= LOGIN_POLICY.hardLockAfterLockouts) hard = 1;
+      if (lockouts.length >= LOGIN_POLICY.hardLockAfterLockouts) { hard = 1; revokeInvites(e.id, 'hard_lock'); }
       db.run("UPDATE sessions SET revoked_at=?, revoke_reason='lockout' WHERE employee_id=? AND revoked_at IS NULL", [nowIso(), e.id]);
       for (const h of activeWith('hr')) queueNotification(h.id, { kind: 'security', ref: e.id, subject: `${fresh.display_name}: too many wrong PINs${hard ? ' — account locked until reset' : ''}`, channels: ['in_app'], hold: false });
     }
@@ -366,6 +366,10 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   const LOCK_MSG = 'Too many wrong tries. Wait 15 minutes or ask management.';
   const lockErr = (r) => r.hard ? new HubError(423, 'hard_locked', HARD_LOCK_MSG) : new HubError(423, 'locked', LOCK_MSG);
   const serialFailure = async (e, action) => tx(() => registerFailure(e, action));
+  // A calendar date that really exists (2026-10-99 does not).
+  const isRealDate = (d) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(String(d || ''))) return false; const t = new Date(d + 'T12:00:00Z'); return !Number.isNaN(t.getTime()) && t.toISOString().slice(0, 10) === d; };
+  // Open welcome links stop working whenever the account's access or credentials change (review 2026-10-27).
+  const revokeInvites = (eid, reason) => db.run("UPDATE invites SET revoked_at=?, send_detail=COALESCE(send_detail, '') || ? WHERE employee_id=? AND used_at IS NULL AND revoked_at IS NULL", [nowIso(), ' · revoked: ' + reason, eid]);
 
   // R1.2 signature: acknowledgment box + PIN re-entered by the signed-in person.
   // R1.1 also asked for a typed name; it added friction without adding attribution
@@ -801,6 +805,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
         [hash, expires, ctx.me.id, salt, e.id]);
       db.run("UPDATE sessions SET revoked_at=?, revoke_reason='pin_reset' WHERE employee_id=? AND revoked_at IS NULL", [nowIso(), e.id]);
       dropPasskeys(e.id, ctx.me.id, 'pin_reset');
+      revokeInvites(e.id, 'pin_reset');
       audit(ctx.me.id, 'pin.temp_issued', 'employee', e.id, { expires, reason });
     });
     return { tempPin: code, code, expiresAt: expires, employee: pub(e),
@@ -829,6 +834,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
       db.run('UPDATE employees SET totp_secret=?, totp_last_counter=-1 WHERE id=?', [sealed, e.id]);
       db.run("UPDATE sessions SET revoked_at=?, revoke_reason='totp_reset' WHERE employee_id=? AND revoked_at IS NULL", [nowIso(), e.id]);
       dropPasskeys(e.id, ctx.me.id, 'totp_reset');
+      revokeInvites(e.id, 'totp_reset');
       audit(ctx.me.id, 'totp.enrolled', 'employee', e.id, {});
     });
     return { secret, otpauth: `otpauth://totp/TAG%20Employee%20Hub:${encodeURIComponent(e.id)}?secret=${secret}&issuer=TAG%20Employee%20Hub`, instructions: 'Scan or type this into the person\'s authenticator app now. It is shown once.' };
@@ -866,7 +872,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     if (raw === undefined) return;
     const email = String(raw || '').trim().toLowerCase();
     if (!email) { db.run('DELETE FROM employee_contacts WHERE employee_id=?', [eid]); return; }
-    if (!/^[^\s@]{1,64}@[^\s@]{1,190}\.[a-z]{2,}$/.test(email)) throw bad('That email address does not look right.', 'email');
+    if (!/^[a-z0-9.!#$%&*+\/=?^_`{|}~-]{1,64}@[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})*\.[a-z]{2,}$/.test(email) || email.length > 200) throw bad('That email address does not look right.', 'email');
     const other = db.get('SELECT employee_id FROM employee_contacts WHERE email=? AND employee_id != ?', [email, eid]);
     if (other) throw new HubError(409, 'email_taken', 'That email is already used by another account.');
     db.run('INSERT INTO employee_contacts (employee_id, email, updated_at) VALUES (?,?,?) ON CONFLICT(employee_id) DO UPDATE SET email=excluded.email, updated_at=excluded.updated_at', [eid, email, nowIso()]);
@@ -923,6 +929,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     const becameManagement = !isElevated(e) && f.roles.some(r => r !== 'employee');
     tx(() => {
       db.run('UPDATE employees SET display_name=?, preferred_language=?, roles=?, supervisor_id=?, department=?, sms_phone=? WHERE id=?', [f.name, f.language, JSON.stringify(f.roles), f.reportsTo, f.department, f.smsPhone, e.id]);
+      if (JSON.stringify(f.roles) !== e.roles || (f.reportsTo || null) !== (e.supervisor_id || null)) revokeInvites(e.id, 'role_or_manager_changed');
       setEmail(e.id, input.email);
       // A role change ends open sessions so new permissions (and MFA) apply at next sign-in.
       if (JSON.stringify(f.roles) !== e.roles) db.run("UPDATE sessions SET revoked_at=?, revoke_reason='role_changed' WHERE employee_id=? AND revoked_at IS NULL", [nowIso(), e.id]);
@@ -1812,7 +1819,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   A['hr.addAbsence'] = (ctx, { employeeId, startDate, endDate, reason }) => {
     const e = emp(employeeId); if (!e) throw notFound();
     if (!(has(ctx, 'hr') || (has(ctx, 'supervisor') && e.supervisor_id === ctx.me.id))) throw deny();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(startDate)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(endDate)) || endDate < startDate) throw bad('Enter valid dates.');
+    if (!isRealDate(startDate) || !isRealDate(endDate) || endDate < startDate) throw bad('Enter valid dates.');
     if (!['leave', 'vacation', 'other'].includes(reason)) throw bad('Reason must be leave, vacation or other. Do not record medical reasons here.');
     tx(() => {
       db.run('INSERT INTO absences (id, employee_id, start_date, end_date, reason, recorded_by, created_at) VALUES (?,?,?,?,?,?,?)', [id('ABS'), e.id, startDate, endDate, reason, ctx.me.id, nowIso()]);
@@ -2019,9 +2026,17 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
 
   // ---------------------------------------------------------------- dispatcher
   // meta.rp = { rpId, origin } of the page (passkeys are bound to the web address).
+  const NETWORK_READS = new Set(['points.mine', 'hours.mine', 'admin.ipStatus', 'admin.ipPeople', 'admin.qbtStatus', 'admin.qbtUsers']);
   async function call(token, action, input = {}, meta = {}) {
     if (typeof action !== 'string' || !Object.hasOwn(A, action)) throw new HubError(404, 'unknown_action', 'Unknown action');
     if (input === null || typeof input !== 'object' || Array.isArray(input)) throw bad('Bad input');
+    // Read-only actions that wait on QuickBooks Time or Quickbase run outside the queue (after sign-in
+    // is checked inside it), so a slow outside service never holds up sign-in or signing (review 2026-10-27).
+    if (NETWORK_READS.has(action)) {
+      const ctx = await serial(async () => { const c = authenticate(token); if (c.session.must_set_pin) throw new HubError(403, 'must_set_pin', 'Choose your PIN first.'); return c; });
+      ctx.rp = meta.rp || null;
+      return A[action](ctx, input);
+    }
     return serial(async () => {
       const ctx = authenticate(token);
       ctx.rp = meta.rp || null;
@@ -2221,8 +2236,10 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   const qbtCache = new Map();
   async function cached(key, ms, fn) {
     const hit = qbtCache.get(key);
-    if (hit && Date.now() - hit.at < ms) return hit.value;
-    const value = await fn();
+    if (hit && hit.error && Date.now() - hit.at < 60000) throw hit.error;
+    if (hit && !hit.error && Date.now() - hit.at < ms) return hit.value;
+    let value;
+    try { value = await fn(); } catch (e) { qbtCache.set(key, { at: Date.now(), error: e }); throw e; }
     qbtCache.set(key, { at: Date.now(), value });
     if (qbtCache.size > 500) qbtCache.delete(qbtCache.keys().next().value);
     return value;
@@ -2306,7 +2323,9 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   const TO_KINDS = ['vacation', 'sick', 'unpaid', 'other'];
   const toAbsenceReason = { vacation: 'vacation', unpaid: 'leave', sick: 'other', other: 'other' };   // never a medical reason
   const toReq = (rid) => db.get('SELECT * FROM time_off_requests WHERE id=?', [String(rid || '')]);
-  const canDecideFor = (ctx, e) => !!e && e.id !== ctx.me.id && (has(ctx, 'hr') || (has(ctx, 'supervisor') && e.supervisor_id === ctx.me.id));
+  const otherHr = (eid) => db.get("SELECT 1 FROM employees WHERE status='active' AND id != ? AND roles LIKE '%\"hr\"%' LIMIT 1", [eid]);
+  // Nobody decides their own time off, except the only full-access person (nobody else could), which is recorded.
+  const canDecideFor = (ctx, e) => !!e && (e.id !== ctx.me.id ? (has(ctx, 'hr') || (has(ctx, 'supervisor') && e.supervisor_id === ctx.me.id)) : (has(ctx, 'hr') && !otherHr(ctx.me.id)));
   const workdaysBetween = (a, b) => { let n = 0; for (let d = a; d <= b; d = addDays(d, 1)) { const wd = new Date(d + 'T12:00:00Z').getUTCDay(); if (wd >= 1 && wd <= 5) n++; } return n; };
   const recomputeWeeks = (startDate, endDate) => { const cur = weekFor().weekId; for (let wk = weekFor(startDate); wk.weekId <= weekFor(endDate).weekId && wk.weekId <= cur; wk = weekFor(addDays(wk.weekId, 7))) ensureAssignments(wk); };
   const othersOff = (r, excludeId) => db.all(`SELECT t.employee_id, t.start_date, t.end_date, t.status FROM time_off_requests t JOIN employees e ON e.id=t.employee_id
@@ -2317,7 +2336,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     decidedBy: r.decided_by ? nameOf(r.decided_by) : null, decidedAt: r.decided_at, decisionNote: r.decision_note,
     canCancel: ['pending', 'approved'].includes(r.status) && r.end_date >= ymdOf(now(), tz) && (r.employee_id === ctx.me.id || canDecideFor(ctx, emp(r.employee_id))),
     canDecide: r.status === 'pending' && canDecideFor(ctx, emp(r.employee_id)),
-    ...(details ? { alsoOff: othersOff(r, r.id), noticeDays: Math.round((new Date(r.start_date + 'T12:00:00Z') - new Date(ymdOf(new Date(r.requested_at), tz) + 'T12:00:00Z')) / 86400000) } : {}) });
+    ...(details ? { alsoOff: othersOff(r, r.id).filter(o => !o.pending || canDecideFor(ctx, emp(r.employee_id)) && r.employee_id !== ctx.me.id || has(ctx, 'hr')), noticeDays: Math.round((new Date(r.start_date + 'T12:00:00Z') - new Date(ymdOf(new Date(r.requested_at), tz) + 'T12:00:00Z')) / 86400000) } : {}) });
   const approversOf = (e) => { const sup = e.supervisor_id ? emp(e.supervisor_id) : null; return sup && sup.status === 'active' ? [sup.id] : db.all("SELECT id FROM employees WHERE status='active' AND roles LIKE '%\"hr\"%'", []).map(x => x.id).filter(x => x !== e.id); };
   function approveTx(ctx, r, note) {
     const aid = id('ABS'), n = nowIso();
@@ -2331,7 +2350,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     const forSomeoneElse = e.id !== ctx.me.id;
     if (forSomeoneElse && !canDecideFor(ctx, e)) throw deny('Only the person\'s manager or full access can enter time off for someone else.');
     if (!TO_KINDS.includes(kind)) throw bad('Choose the kind of time off.', 'kind');
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(startDate)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(endDate)) || endDate < startDate) throw bad('Choose the first and last day.', 'dates');
+    if (!isRealDate(startDate) || !isRealDate(endDate) || endDate < startDate) throw bad('Choose the first and last day.', 'dates');
     const today = ymdOf(now(), tz);
     if (startDate < addDays(today, -30)) throw bad('That is more than 30 days ago. Ask your manager.', 'dates');
     if (startDate > addDays(today, 400)) throw bad('That is more than a year away.', 'dates');
@@ -2369,6 +2388,18 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     const r = toReq(requestId); if (!r) throw notFound();
     const v = toView(ctx, r);
     if (!v.canCancel) throw deny('This request cannot be cancelled (already past, decided, or not yours).');
+    const today = ymdOf(now(), tz);
+    if (r.status === 'approved' && r.start_date < today) {
+      // Already under way: days already taken stay taken; it ends yesterday instead.
+      const yesterday = addDays(today, -1), endedOn = yesterday < r.start_date ? r.start_date : yesterday;
+      tx(() => {
+        if (r.absence_id) db.run('UPDATE absences SET end_date=? WHERE id=?', [endedOn, r.absence_id]);
+        db.run("UPDATE time_off_requests SET end_date=?, decision_note=? WHERE id=?", [endedOn, [r.decision_note, `Ended early (back ${today}) by ${ctx.me.display_name}`].filter(Boolean).join(' · '), r.id]);
+        recomputeWeeks(today, r.end_date);
+        audit(ctx.me.id, 'timeoff.ended_early', 'employee', r.employee_id, { requestId: r.id, endedOn });
+      });
+      return { ok: true, endedEarly: true };
+    }
     tx(() => {
       if (r.absence_id) { db.run('DELETE FROM absences WHERE id=?', [r.absence_id]); recomputeWeeks(r.start_date, r.end_date); }
       db.run("UPDATE time_off_requests SET status='cancelled', cancelled_by=?, cancelled_at=? WHERE id=?", [ctx.me.id, nowIso(), r.id]);
@@ -2400,7 +2431,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     const rows = db.all(`SELECT t.* FROM time_off_requests t JOIN employees e ON e.id=t.employee_id WHERE e.status='active' AND t.status IN ('approved','pending') AND t.end_date >= ? AND t.start_date <= ? ORDER BY t.start_date`, [first, last])
       .filter(r => r.status === 'approved' || r.employee_id === ctx.me.id || canDecideFor(ctx, emp(r.employee_id)));
     return { month: m, first, last, entries: rows.map(r => ({ name: nameOf(r.employee_id), employeeId: r.employee_id, startDate: r.start_date, endDate: r.end_date, pending: r.status === 'pending',
-      kind: mgr || r.employee_id === ctx.me.id ? r.kind : null, mine: r.employee_id === ctx.me.id })) };
+      kind: (has(ctx, 'hr') || r.employee_id === ctx.me.id || canDecideFor(ctx, emp(r.employee_id))) ? r.kind : null, mine: r.employee_id === ctx.me.id })) };
   };
   function timeOffHome(ctx) {
     const today = ymdOf(now(), tz);
@@ -2519,7 +2550,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     const title_en = clip(input.titleEn, 160).trim(); if (!title_en) throw bad('Give the document a title.', 'title');
     const body_en = clip(input.bodyEn).trim(); if (!body_en) throw bad('The English text is empty.', 'body');
     const fields = { title_en, title_es: clip(input.titleEs, 160).trim() || null, body_en, body_es: clip(input.bodyEs).trim() || null,
-      version_label: clip(input.version, 20).trim() || '1', effective_date: /^\d{4}-\d{2}-\d{2}$/.test(String(input.effectiveDate || '')) ? input.effectiveDate : null,
+      version_label: clip(input.version, 20).trim() || '1', effective_date: isRealDate(input.effectiveDate) ? input.effectiveDate : null,
       ack_required: input.ackRequired === false ? 0 : 1, ack_statement_en: clip(input.ackEn, 800).trim() || null, ack_statement_es: clip(input.ackEs, 800).trim() || null };
     const category = DOC_CATS.includes(input.category) ? input.category : 'policy';
     const n = nowIso();
@@ -2575,7 +2606,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     if (!has(ctx, 'hr')) throw deny('Only a full-access manager can publish company documents.');
     const v = docVer(versionId); if (!v || v.status !== 'draft') throw notFound();
     const hash = docHash(v);
-    if (contentSha256 && contentSha256 !== hash) throw new HubError(409, 'doc_changed', 'The draft changed since you opened it. Check it again before publishing.');
+    if (contentSha256 !== hash) throw new HubError(409, 'doc_changed', 'The draft changed since you opened it. Check it again before publishing.');
     const n = nowIso();
     const d = db.get('SELECT * FROM documents WHERE id=?', [v.document_id]);
     tx(() => {
@@ -2613,7 +2644,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
       titleEn: 'Sample Employee Handbook (example only)', titleEs: 'Manual del empleado de ejemplo (solo de muestra)',
       bodyEn: `# Welcome\nThis is an invented sample so you can try the Company documents screens. It is not the company handbook.\n\n## Work hours\n- Regular hours are Monday to Friday.\n- Clock in and out in QuickBooks Time.\n\n## Safety first\nIf you are not sure, **stop and ask**. Report hazards right away with the Hub's Safety button.\n\n## Questions\nAsk your supervisor about anything in this handbook.`,
       bodyEs: `# Bienvenido\nEste es un ejemplo inventado para probar las pantallas de Documentos de la empresa. No es el manual de la empresa.\n\n## Horario\n- El horario regular es de lunes a viernes.\n- Marque su entrada y salida en QuickBooks Time.\n\n## La seguridad primero\nSi no está seguro, **pare y pregunte**. Reporte los peligros enseguida con el botón Seguridad del Portal.\n\n## Preguntas\nPregunte a su supervisor sobre cualquier cosa de este manual.` });
-    A['docs.publish'](ctx, { versionId: hb.versionId });
+    A['docs.publish'](ctx, { versionId: hb.versionId, contentSha256: docHash(docVer(hb.versionId)) });
     A['docs.saveDraft'](ctx, { category: 'policy', version: '1', titleEn: 'Sample: Phones at work (draft)', titleEs: 'Ejemplo: Teléfonos en el trabajo (borrador)',
       bodyEn: 'An invented draft policy. Drafts are only visible to full-access managers until published.\n\n- Company apps (Employee Hub, QuickBooks Time, Order Manager) may be used on your own phone at work.',
       bodyEs: 'Una política de ejemplo en borrador. Solo la gerencia con acceso completo ve los borradores hasta publicarlos.\n\n- Las apps de la empresa (Portal del empleado, QuickBooks Time, Order Manager) se pueden usar en su propio teléfono en el trabajo.' });
@@ -2626,6 +2657,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   // its Quickbase employee (names are only suggestions) and can hide the card in Admin.
   const ipx = 'innerpoints' in platform ? platform.innerpoints : (cfg.demo ? makeDemoInnerPoints({ clock, people: () => db.all("SELECT display_name name FROM employees WHERE status='active' ORDER BY id", []) }) : null);
   const ipFail = (e) => { if (e instanceof IpError) throw new HubError(502, e.code, e.message); throw e; };
+  const ipFailStaff = (e) => { if (e instanceof IpError) throw new HubError(502, e.code === 'ip_schema' ? 'ip_schema' : 'ip_unavailable', 'InnerPoints are not available right now.'); throw e; };
   const ipShown = () => (db.get("SELECT v FROM meta WHERE k='ip_show'") || {}).v !== '0';
   const IP_LABEL = { WO_COMPLETE: 'wo', FAST_COMPLETE: 'fast', DESIGN: 'design', SALES_CALL: 'sales', SAFETY: 'safety', MANUAL: 'bonus' };
   A['points.mine'] = async (ctx) => {
@@ -2633,7 +2665,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     const link = db.get('SELECT * FROM ip_links WHERE employee_id=?', [ctx.me.id]);
     if (!link) return { available: true, linked: false };
     const cur = reportingWeek(now(), tz), prev = prevWeek(cur);
-    const rows = await cached('ip:' + link.ip_emp_id, 3 * 60000, () => ipx.awards({ empId: link.ip_emp_id, sinceYmd: IP_LAUNCH })).catch(ipFail);
+    const rows = await cached('ip:' + link.ip_emp_id, 3 * 60000, () => ipx.awards({ empId: link.ip_emp_id, sinceYmd: IP_LAUNCH })).catch(ipFailStaff);
     const dayOf = (iso) => iso ? ymdOf(new Date(iso), tz) : '';
     const sum = (list) => list.reduce((a, r) => a + r.points, 0);
     const thisWeek = rows.filter(r => dayOf(r.at) >= cur.start && dayOf(r.at) <= cur.end);
@@ -2707,6 +2739,10 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     const e = emp(employeeId);
     if (!e || e.status !== 'active') throw notFound();
     if (!canInvite(ctx, e)) throw deny('Only a full-access manager, or the person\'s own manager, can invite someone.');
+    // Review 2026-10-27: a welcome link is only for someone who has not chosen a PIN yet. For a person
+    // who is already set up, use Reset PIN (and Reset authenticator) instead.
+    if (e.pin_hash) throw new HubError(409, 'already_set_up', `${e.display_name} has already chosen a PIN. Use Reset PIN if they lost it.`);
+    if (isElevated(e)) throw new HubError(409, 'management_in_person', 'Management accounts are set up in person (temporary PIN and authenticator), not by email.');
     if (!rpOk(ctx.rp)) throw bad('Open the Hub at its web address to make an invite.', 'no_rp');
     const email = emailOf(e.id);
     if (send && !email) throw bad('Add the person\'s email first (Edit), or show the QR code instead.', 'no_email');
@@ -2753,6 +2789,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     const e = emp(inv.employee_id);
     if (!e || e.status !== 'active') return { valid: false, reason: 'unknown' };
     if (!inviteValid(inv)) return { valid: false, reason: inv.used_at ? 'used' : inv.revoked_at ? 'replaced' : 'expired' };
+    if (e.pin_hash || e.hard_locked || isElevated(e)) return { valid: false, reason: 'used' };
     if (!inv.opened_at) tx(() => db.run('UPDATE invites SET opened_at=? WHERE id=?', [nowIso(), inv.id]));
     return { valid: true, firstName: e.display_name.split(' ')[0], language: e.preferred_language, management: isElevated(e), employeeId: e.id, expiresAt: inv.expires_at };
   }
@@ -2763,7 +2800,13 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
       const inv = inviteByToken(token);
       if (!inviteValid(inv)) throw new HubError(410, 'invite_invalid', 'This invite link no longer works. Ask management for a new one.');
       const e = emp(inv.employee_id);
-      if (!e || e.status !== 'active') throw new HubError(410, 'invite_invalid', 'This invite link no longer works. Ask management for a new one.');
+      const inviter = inv.created_by ? emp(inv.created_by) : null;
+      const inviterOk = !!inviter && inviter.status === 'active' && !!e && (rolesOf(inviter).includes('hr') || (rolesOf(inviter).includes('supervisor') && e.supervisor_id === inviter.id));
+      // Re-checked when the link is used, not only when it was made (review 2026-10-27).
+      if (!e || e.status !== 'active' || e.pin_hash || e.hard_locked || isElevated(e) || !inviterOk) {
+        if (e) tx(() => audit(null, 'invite.refused', 'employee', e.id, { inviteId: inv.id }));
+        throw new HubError(410, 'invite_invalid', 'This invite link no longer works. Ask management for a new one.');
+      }
       if (String(newPin) !== String(confirmPin)) throw bad('The two PINs do not match.', 'pin_mismatch');
       const problem = pinProblem(newPin, e.id);
       if (problem) throw bad(problem, 'weak_pin');
@@ -2778,16 +2821,19 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
       const token2 = crypto.randomHex(32), n = now();
       const pol = device ? SESSION_POLICY.shared : (elevated ? SESSION_POLICY.elevated : SESSION_POLICY.personal);
       tx(() => {
-        db.run("UPDATE employees SET pin_salt=?, pin_hash=?, pin_set_at=?, setup_code_hash=NULL, setup_code_expires=NULL, failed_logins=0, locked_until=NULL, hard_locked=0, lockouts_24h='[]' WHERE id=?", [salt, hash, n.toISOString(), e.id]);
+        db.run("UPDATE employees SET pin_salt=?, pin_hash=?, pin_set_at=?, setup_code_hash=NULL, setup_code_expires=NULL, failed_logins=0, locked_until=NULL WHERE id=?", [salt, hash, n.toISOString(), e.id]);
+        dropPasskeys(e.id, e.id, 'invite_used');
         if (mfa) db.run('UPDATE employees SET totp_secret=?, totp_last_counter=-1 WHERE id=?', [mfa.sealed, e.id]);
         db.run('UPDATE invites SET used_at=? WHERE id=?', [n.toISOString(), inv.id]);
         db.run("UPDATE sessions SET revoked_at=?, revoke_reason='invite_used' WHERE employee_id=? AND revoked_at IS NULL", [n.toISOString(), e.id]);
-        db.run(`INSERT INTO sessions (token_hash, employee_id, device_id, shared_device, must_set_pin, created_at, last_seen, idle_minutes, absolute_expires_at)
+        // Management signs in only after entering a code from the new authenticator (normal sign-in), so the
+        // link alone never opens a management session and the authenticator is proven to work.
+        if (!mfa) db.run(`INSERT INTO sessions (token_hash, employee_id, device_id, shared_device, must_set_pin, created_at, last_seen, idle_minutes, absolute_expires_at)
                 VALUES (?,?,?,?,?,?,?,?,?)`, [crypto.sha256(token2), e.id, device ? device.id : null, device ? 1 : 0, 0, n.toISOString(), n.toISOString(), pol.idleMinutes, new Date(n.getTime() + pol.absoluteMinutes * 60000).toISOString()]);
         audit(e.id, 'invite.used', 'employee', e.id, { inviteId: inv.id, mfaEnrolled: !!mfa });
         if (inv.created_by && inv.created_by !== e.id) queueNotification(inv.created_by, { kind: 'security', ref: e.id, subject: `${e.display_name} finished setting up their Hub account`, channels: ['in_app'], hold: false });
       });
-      return { token: token2, idleMinutes: pol.idleMinutes, employee: pub(e), mfa: mfa ? { secret: mfa.secret, otpauth: mfa.otpauth } : null };
+      return { token: mfa ? null : token2, idleMinutes: pol.idleMinutes, employee: pub(e), mfa: mfa ? { secret: mfa.secret, otpauth: mfa.otpauth } : null, needCode: !!mfa };
     });
   }
 

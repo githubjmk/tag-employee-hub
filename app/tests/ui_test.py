@@ -932,6 +932,7 @@ def t_invite(browser, errors):
             virtual_authenticator(phone, ph); link = link.replace('127.0.0.1', 'localhost')
         ph.goto(link)
         ph.wait_for_selector('form[data-form=join]')
+        assert ph.url.endswith('#/join'), 'the link code is taken out of the address bar: ' + ph.url
         expect(ph.locator('h1')).to_contain_text('Uma')
         axe(ph, 'join page'); no_hscroll(ph, 'join page'); shot(ph, 'u17-02-join')
         expect(ph.locator('.join-steps li')).to_have_count(3)                       # PIN, home screen, Face ID

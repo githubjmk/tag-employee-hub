@@ -12,7 +12,8 @@ export function makeResendMailer({ fetch, apiKey, from = 'Innerspace Employee Hu
         r = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ from, to: [to], subject, html, text, ...(replyTo ? { reply_to: replyTo } : {}) })
+          body: JSON.stringify({ from, to: [to], subject, html, text, ...(replyTo ? { reply_to: replyTo } : {}) }),
+          signal: AbortSignal.timeout(10000)
         });
       } catch { return { ok: false, detail: 'network' }; }
       let j = null; try { j = await r.json(); } catch { /* ignore */ }

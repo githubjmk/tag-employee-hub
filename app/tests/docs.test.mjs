@@ -132,4 +132,10 @@ test('DOC-06 drafts can be deleted; a document can be archived (no longer asked 
   await call('E-101', 'docs.archive', { documentId: hb.id, restore: true });
   assert.equal((await call('E-107', 'docs.list')).pending.length, 1);
   assert.equal((await call('E-101', 'docs.saveDraft', { titleEn: 'x', bodyEn: 'y'.repeat(200001) }).catch(e => e)).code, 'too_long');
+  // Review fix: published versions are locked in the database, and publishing needs the text fingerprint.
+  const live = db.get("SELECT id FROM document_versions WHERE status='published' LIMIT 1").id;
+  assert.throws(() => db.run("UPDATE document_versions SET body_en='changed' WHERE id=?", [live]), /cannot be changed/);
+  assert.throws(() => db.run('DELETE FROM document_versions WHERE id=?', [live]), /cannot be deleted/);
+  const d2 = await call('E-101', 'docs.saveDraft', { category: 'policy', titleEn: 'No hash', bodyEn: 'Text' });
+  await rejects(call('E-101', 'docs.publish', { versionId: d2.versionId }), 409, 'doc_changed');
 });
