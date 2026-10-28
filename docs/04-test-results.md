@@ -220,3 +220,17 @@ New checks:
 
 ## Management Home (2026-10-27, commit 4d4a206)
 - API: 79/79. Browser: 19/19 on the Node server and 19/19 on local Cloudflare. This includes U19 (managers land on Home, see the Your team card, and reach the dashboard and accounts) and the updated U1.
+
+## Company documents (2026-10-27)
+- API: 85/85, including DOC-01…DOC-06. These cover:
+  - the sample-only test copy;
+  - drafts visible only to full access;
+  - PIN signing (box, PIN and text fingerprint required);
+  - the statement kept in the language signed;
+  - signatures that are append-only;
+  - new versions (everyone signs again, old signatures kept);
+  - who-has-signed scope;
+  - Face ID approval bound to the version and language;
+  - archive and restore;
+  - the size limit.
+- Browser: 21/21 on the Node server and 21/21 on local Cloudflare, including U21 (Home to-do, then read, then sign with PIN; manager: new, save, publish with two taps, then who has signed).
