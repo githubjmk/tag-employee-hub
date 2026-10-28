@@ -673,3 +673,14 @@ form.one-q .opt input:checked + span { animation: picked .28s ease-out; }
 
 /* Sign-in and welcome-link pages: centred on wide screens (the 860px cap is for pages beside the side menu). */
 main.login { max-width: none; }
+
+/* Onboarding checklist */
+.ob-progress { height: 10px; border-radius: 99px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; margin: 8px 0 4px; }
+.ob-progress span { display: block; height: 100%; width: calc(var(--w, 0) * 100%); background: var(--ok); border-radius: 99px; }
+.ob-list { list-style: none; padding: 0; margin: 6px 0; }
+.ob-item { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--line); }
+.ob-item.done strong { color: var(--ink-2); }
+.ob-check { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; border: 2px solid var(--line); font-weight: 800; color: var(--ink-2); }
+.ob-item.done .ob-check { border-color: var(--ok); background: var(--ok-soft); color: var(--ok); }
+.ob-actions { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+.ob-card { border-top: 4px solid var(--ok); }

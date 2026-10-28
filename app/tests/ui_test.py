@@ -1123,6 +1123,50 @@ def t_timeoff(browser, errors):
         return 'request (3 workdays, 60-day hint) -> manager Home to-do -> approve -> Approved + calendar'
 
 
+
+@test('U23 onboarding: a new hire who joins from the welcome link sees "Your first week" on Home; their supervisor gets a to-do and ticks the safety walk-through; the office ticks the I-9')
+def t_onboard(browser, errors):
+    with Server() as srv:
+        ctx, pg = new_page(browser, TABLET, errors)
+        login(pg, srv, 'E-101', shared=False)
+        pg.goto(srv.base + '#/accounts'); pg.wait_for_selector('main h1')
+        pg.click('#new-account summary')
+        f = 'form[data-form=acreate] '
+        pg.fill(f + 'input[name=name]', 'Ona Firstweek'); pg.fill(f + 'input[name=email]', 'ona@example.com')
+        pg.select_option(f + 'select[name=reportsTo]', 'E-102')
+        pg.click(f + 'button[type=submit]'); pg.wait_for_selector('.acct-out .invite-box')
+        link = pg.inner_text('.acct-out .invite-box .code').strip()
+        new_id = pg.locator('.acct-out:has(.invite-box)').locator('xpath=ancestor::article').get_attribute('id').replace('acct-', '')
+        ctx.close()
+        ph_ctx, ph = new_page(browser, PHONE, errors)
+        ph.goto(link); ph.wait_for_selector('form[data-form=join]')
+        ph.fill('input[name=newPin]', '58302719'); ph.fill('input[name=confirmPin]', '58302719')
+        ph.click('form[data-form=join] button[type=submit]'); ph.wait_for_selector('.guide')
+        ph.goto(srv.base + '#/home'); ph.wait_for_selector('.ob-card')
+        expect(ph.locator('.ob-card h2')).to_have_text('Your first week')
+        expect(ph.locator('.ob-card')).to_contain_text('Finish your payroll setup in QuickBooks Workforce')
+        expect(ph.locator('.ob-card')).not_to_contain_text('Form I-9 completed')                       # office items are not shown to her
+        ph.locator('.ob-card [data-task=e_i9docs]').click(); ph.wait_for_selector('main h1')
+        axe(ph, 'new hire home'); no_hscroll(ph, 'new hire home'); shot(ph, 'u23-01-first-week')
+        ph_ctx.close()
+        ctx, pg = new_page(browser, TABLET, errors)
+        login(pg, srv, 'E-102', shared=False)
+        pg.goto(srv.base + '#/home'); pg.wait_for_selector(f'.attention a[href="#/onboard/{new_id}"]')
+        pg.click(f'.attention a[href="#/onboard/{new_id}"]'); pg.wait_for_selector('.ob-list')
+        expect(pg.locator('main h1')).to_have_text('Ona Firstweek')
+        expect(pg.locator('[data-task=o_i9]')).to_have_count(0)                                       # office item: not Dana's
+        pg.click('[data-task=s_safety][data-status=done]'); pg.wait_for_selector('.ob-item.done:has-text("Safety walk-through done")')
+        axe(pg, 'onboarding checklist'); shot(pg, 'u23-02-checklist')
+        ctx.close()
+        ctx, pg = new_page(browser, TABLET, errors)
+        login(pg, srv, 'E-101', shared=False)
+        pg.goto(srv.base + f'#/onboard/{new_id}'); pg.wait_for_selector('.ob-list')
+        pg.click('[data-task=o_i9][data-status=done]'); pg.wait_for_selector('.ob-item.done:has-text("Form I-9 completed")')
+        expect(pg.locator('main')).to_contain_text('never in the Hub')
+        ctx.close()
+        return 'join -> Your first week; supervisor to-do -> safety walk-through; office -> I-9 tick'
+
+
 if __name__ == '__main__':
     with sync_playwright() as p:
         browser = p.chromium.launch()

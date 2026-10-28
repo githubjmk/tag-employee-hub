@@ -849,6 +849,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     passkeys: db.get('SELECT COUNT(*) n FROM passkeys WHERE employee_id=? AND removed_at IS NULL', [e.id]).n,
     email: (has(ctx, 'hr') || e.id === ctx.me.id || e.supervisor_id === ctx.me.id) ? emailOf(e.id) : null,
     onboarding: onboardingOf(e),
+    checklist: (() => { const ob = db.get('SELECT completed_at FROM onboarding WHERE employee_id=?', [e.id]); return ob ? { completed: !!ob.completed_at } : null; })(),
     smsPhone: has(ctx, 'hr') || e.id === ctx.me.id ? e.sms_phone : (e.sms_phone ? 'on file' : null)
   });
   const canSeeAccount = (ctx, e) => has(ctx, 'hr') || e.supervisor_id === ctx.me.id || e.id === ctx.me.id;
@@ -913,6 +914,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
       db.run(`INSERT INTO employees (id, display_name, preferred_language, status, start_date, supervisor_id, roles, department, sms_phone, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
         [eid, f.name, f.language, 'active', start, f.reportsTo, JSON.stringify(f.roles), f.department, f.smsPhone, nowIso()]);
       setEmail(eid, input.email);
+      db.run('INSERT INTO onboarding (employee_id, started_at, started_by) VALUES (?,?,?)', [eid, nowIso(), ctx.me.id]);   // new hire checklist
       audit(ctx.me.id, 'account.created', 'employee', eid, { roles: f.roles, reportsTo: f.reportsTo, email: !!input.email });
     });
     const e = emp(eid);
@@ -1064,7 +1066,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
       .filter(r => r.state === 'clarification_requested' || (r.recent && r.lastSignoff && !r.employeeSeen));
     const safety = db.all("SELECT id, type, status, created_at FROM safety_reports WHERE reporter_id=? AND (status != 'closed' OR closed_at >= ?) ORDER BY created_at DESC LIMIT 5",
       [ctx.me.id, new Date(now().getTime() - 14 * 86400000).toISOString()]);
-    return { greetingName: ctx.me.display_name.split(' ')[0], surveys, reviewItems: myReviewItems, safety, links: LINKS, reviewer: nameOf(ctx.me.supervisor_id), pendingDocs: pendingDocsFor(ctx.me.id), timeOff: timeOffHome(ctx) };
+    return { greetingName: ctx.me.display_name.split(' ')[0], surveys, reviewItems: myReviewItems, safety, links: LINKS, reviewer: nameOf(ctx.me.supervisor_id), pendingDocs: pendingDocsFor(ctx.me.id), timeOff: timeOffHome(ctx), onboarding: onboardHome(ctx) };
   };
 
   A['survey.template'] = (ctx, { assignmentId }) => {
@@ -2316,6 +2318,102 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     return { ok: true, linkedTo: { id: u.id, name: u.name } };
   };
 
+  // ---------------------------------------------------------------- onboarding checklist (R1.3, owner 2026-10-28)
+  // Built from the company's "New Hire Checklist". Office tasks (full access), supervisor tasks (the
+  // person's manager or full access), the new hire's own tasks, and tasks the Hub ticks by itself. The
+  // Hub keeps only who ticked what and when: I-9 documents, W-4/DE-4, bank details and EEOC answers
+  // stay on paper or in payroll.
+  const ONBOARD_TASKS = [
+    { key: 'o_offer', who: 'office' }, { key: 'o_i9', who: 'office' }, { key: 'o_tax', who: 'office' }, { key: 'o_deposit', who: 'office' },
+    { key: 'o_emergency', who: 'office' }, { key: 'o_eeoc', who: 'office', optional: true }, { key: 'o_payroll', who: 'office' },
+    { key: 's_firstday', who: 'supervisor' }, { key: 's_ppe', who: 'supervisor' }, { key: 's_locker', who: 'supervisor' }, { key: 's_safety', who: 'supervisor' },
+    { key: 'e_i9docs', who: 'employee' }, { key: 'e_payroll', who: 'employee', link: 'https://workforce.intuit.com/' },
+    { key: 'a_account', who: 'auto' }, { key: 'a_phone', who: 'auto', optional: true }, { key: 'a_docs', who: 'auto' }, { key: 'a_report', who: 'auto' }
+  ];
+  const onboardOf = (eid) => db.get('SELECT * FROM onboarding WHERE employee_id=?', [eid]);
+  const canOffice = (ctx) => has(ctx, 'hr');
+  const canSupervise = (ctx, e) => has(ctx, 'hr') || (has(ctx, 'supervisor') && e.supervisor_id === ctx.me.id);
+  function autoDone(e, key) {
+    if (key === 'a_account') return !!e.pin_hash;
+    if (key === 'a_phone') return db.get('SELECT COUNT(*) n FROM passkeys WHERE employee_id=? AND removed_at IS NULL', [e.id]).n > 0;
+    if (key === 'a_docs') return pendingDocsFor(e.id).length === 0;
+    if (key === 'a_report') return !!db.get('SELECT 1 FROM survey_submissions WHERE employee_id=? LIMIT 1', [e.id]);
+    return false;
+  }
+  function checklistOf(ctx, e) {
+    const marks = Object.fromEntries(db.all('SELECT * FROM onboarding_items WHERE employee_id=?', [e.id]).map(r => [r.task_key, r]));
+    const items = ONBOARD_TASKS.map(t => {
+      const m = marks[t.key];
+      const done = t.who === 'auto' ? autoDone(e, t.key) : !!m;
+      const canMark = t.who === 'office' ? canOffice(ctx) : t.who === 'supervisor' ? canSupervise(ctx, e) : t.who === 'employee' ? (ctx.me.id === e.id || canSupervise(ctx, e)) : false;
+      return { key: t.key, who: t.who, optional: !!t.optional, link: t.link || null, done, status: m ? m.status : (done ? 'done' : null), doneBy: m ? nameOf(m.done_by) : null, doneAt: m ? m.done_at : null, canMark };
+    });
+    const required = items.filter(i => !i.optional);
+    return { items, done: required.filter(i => i.done).length, total: required.length };
+  }
+  const onboardVisible = (ctx, e) => !!e && (e.id === ctx.me.id || canSupervise(ctx, e));
+  function maybeComplete(e, byId) {
+    const ob = onboardOf(e.id); if (!ob || ob.completed_at) return;
+    const c = checklistOf({ me: emp(byId) || e, roles: [] }, e);
+    if (c.done === c.total) { db.run('UPDATE onboarding SET completed_at=?, completed_by=? WHERE employee_id=?', [nowIso(), 'auto', e.id]); audit(byId, 'onboarding.completed', 'employee', e.id, { auto: true }); }
+  }
+  A['onboard.start'] = (ctx, { employeeId }) => {
+    const e = emp(employeeId); if (!e || e.status !== 'active') throw notFound();
+    if (!canSupervise(ctx, e)) throw deny();
+    if (onboardOf(e.id)) return { ok: true, already: true };
+    tx(() => { db.run('INSERT INTO onboarding (employee_id, started_at, started_by) VALUES (?,?,?)', [e.id, nowIso(), ctx.me.id]); audit(ctx.me.id, 'onboarding.started', 'employee', e.id, {}); });
+    return { ok: true };
+  };
+  A['onboard.get'] = (ctx, { employeeId } = {}) => {
+    const e = emp(employeeId || ctx.me.id);
+    if (!onboardVisible(ctx, e)) throw notFound();
+    const ob = onboardOf(e.id);
+    if (!ob) return { employee: pub(e), active: false };
+    let c = checklistOf(ctx, e);
+    if (!ob.completed_at && c.done === c.total) { tx(() => maybeComplete(e, ctx.me.id)); return A['onboard.get'](ctx, { employeeId: e.id }); }   // last item was automatic
+    // The new hire sees their own tasks and the automatic ones; office and supervisor tasks show only as progress.
+    const self = e.id === ctx.me.id && !canSupervise(ctx, e);
+    return { employee: { ...pub(e), startDate: e.start_date, supervisor: nameOf(e.supervisor_id) }, active: !ob.completed_at, startedAt: ob.started_at, completedAt: ob.completed_at,
+      items: self ? c.items.filter(i => ['employee', 'auto'].includes(i.who)) : c.items, done: c.done, total: c.total,
+      othersLeft: self ? c.items.filter(i => ['office', 'supervisor'].includes(i.who) && !i.done && !i.optional).length : null };
+  };
+  A['onboard.mark'] = (ctx, { employeeId, task, status } = {}) => {
+    const e = emp(employeeId); if (!e || e.status !== 'active') throw notFound();
+    if (!onboardVisible(ctx, e) || !onboardOf(e.id)) throw notFound();
+    const t = ONBOARD_TASKS.find(x => x.key === task); if (!t || t.who === 'auto') throw bad('That item is ticked by the Hub itself.', 'task');
+    const allowed = t.who === 'office' ? canOffice(ctx) : t.who === 'supervisor' ? canSupervise(ctx, e) : (ctx.me.id === e.id || canSupervise(ctx, e));
+    if (!allowed) throw deny(t.who === 'office' ? 'Only full access (the office) ticks this.' : 'Only their manager or full access ticks this.');
+    if (status === 'na' && !t.optional) throw bad('Only optional items can be marked not needed.', 'na');
+    tx(() => {
+      if (status === null || status === 'undo') db.run('DELETE FROM onboarding_items WHERE employee_id=? AND task_key=?', [e.id, t.key]);
+      else db.run('INSERT INTO onboarding_items (employee_id, task_key, status, done_by, done_at) VALUES (?,?,?,?,?) ON CONFLICT(employee_id, task_key) DO UPDATE SET status=excluded.status, done_by=excluded.done_by, done_at=excluded.done_at', [e.id, t.key, status === 'na' ? 'na' : 'done', ctx.me.id, nowIso()]);
+      audit(ctx.me.id, 'onboarding.item', 'employee', e.id, { task: t.key, status: status || 'undo' });
+      if (status !== null && status !== 'undo') maybeComplete(e, ctx.me.id);
+    });
+    return A['onboard.get'](ctx, { employeeId: e.id });
+  };
+  A['onboard.finish'] = (ctx, { employeeId, reopen } = {}) => {
+    if (!has(ctx, 'hr')) throw deny();
+    const e = emp(employeeId); if (!e || !onboardOf(e.id)) throw notFound();
+    tx(() => { db.run('UPDATE onboarding SET completed_at=?, completed_by=? WHERE employee_id=?', [reopen ? null : nowIso(), reopen ? null : ctx.me.id, e.id]); audit(ctx.me.id, reopen ? 'onboarding.reopened' : 'onboarding.closed', 'employee', e.id, {}); });
+    return { ok: true };
+  };
+  A['onboard.list'] = (ctx) => {
+    if (!any(ctx, 'supervisor', 'hr')) throw deny();
+    const rows = db.all("SELECT o.*, e.display_name FROM onboarding o JOIN employees e ON e.id=o.employee_id WHERE e.status='active' ORDER BY o.completed_at IS NOT NULL, o.started_at DESC", [])
+      .map(o => ({ o, e: emp(o.employee_id) })).filter(({ e }) => canSupervise(ctx, e));
+    return { people: rows.map(({ o, e }) => { const c = checklistOf(ctx, e); return { employee: { ...pub(e), startDate: e.start_date, supervisor: nameOf(e.supervisor_id) }, startedAt: o.started_at, completedAt: o.completed_at, done: c.done, total: c.total,
+      myOpen: c.items.filter(i => i.canMark && !i.done && !i.optional && i.who !== 'employee').length }; }) };
+  };
+  function onboardHome(ctx) {
+    if (onboardOf(ctx.me.id) && !onboardOf(ctx.me.id).completed_at) tx(() => maybeComplete(ctx.me, ctx.me.id));
+    const mine = onboardOf(ctx.me.id);
+    const me = mine && !mine.completed_at ? (() => { const c = checklistOf(ctx, ctx.me); const left = c.items.filter(i => ['employee', 'auto'].includes(i.who) && !i.done && !i.optional).length; return { done: c.done, total: c.total, myLeft: left }; })() : null;
+    const team = any(ctx, 'supervisor', 'hr') ? db.all('SELECT employee_id FROM onboarding WHERE completed_at IS NULL', []).map(r => emp(r.employee_id)).filter(e => e && e.status === 'active' && e.id !== ctx.me.id && canSupervise(ctx, e))
+      .map(e => ({ id: e.id, name: e.display_name, open: checklistOf(ctx, e).items.filter(i => i.canMark && !i.done && !i.optional && i.who !== 'employee').length })).filter(x => x.open > 0) : [];
+    return { me, team };
+  }
+
   // ---------------------------------------------------------------- time off (R1.3, owner 2026-10-27)
   // Replaces asking in person (which still works: a manager can enter a request for someone). The
   // handbook asks for vacation in writing, 60 days ahead, with few people off at once; the Hub keeps
@@ -2846,7 +2944,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   // The file carries the audit-chain head and its own SHA-256 so a copy can be checked later.
   const BACKUP_TABLES = ['employees', 'devices', 'esign_consents', 'absences', 'survey_assignments', 'survey_drafts', 'survey_submissions', 'survey_amendments',
     'supervisor_reviews', 'review_events', 'paper_events', 'safety_reports', 'safety_events', 'corrective_actions', 'ca_events', 'attachments', 'notifications',
-    'notification_attempts', 'audit_events', 'passkeys', 'qbt_links', 'employee_contacts', 'invites', 'ip_links', 'documents', 'document_versions', 'document_acks', 'time_off_requests'];
+    'notification_attempts', 'audit_events', 'passkeys', 'qbt_links', 'employee_contacts', 'invites', 'ip_links', 'documents', 'document_versions', 'document_acks', 'time_off_requests', 'onboarding', 'onboarding_items'];
   const BACKUP_OMIT = { employees: ['pin_salt', 'pin_hash', 'setup_code_hash', 'setup_code_expires', 'setup_code_issued_by', 'totp_secret', 'totp_last_counter', 'failed_logins', 'locked_until', 'lockouts_24h', 'sim_fail_sms'], devices: ['token_hash'], passkeys: ['public_key_jwk', 'credential_id'], invites: ['token_hash'] };
   A['admin.backupExport'] = (ctx) => {
     if (!has(ctx, 'hr')) throw deny('Only a full-access manager can export a backup.');

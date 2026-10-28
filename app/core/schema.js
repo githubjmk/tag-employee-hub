@@ -150,6 +150,23 @@ CREATE TABLE IF NOT EXISTS time_off_requests (
   cancelled_at TEXT
 );
 CREATE INDEX IF NOT EXISTS time_off_dates ON time_off_requests (status, start_date, end_date);
+-- Onboarding checklist, R1.3 (owner 2026-10-28, from the "New Hire Checklist"). One checklist per new
+-- hire; only ticks (who and when) are stored, never ID documents, tax forms, bank or EEOC details.
+CREATE TABLE IF NOT EXISTS onboarding (
+  employee_id TEXT PRIMARY KEY REFERENCES employees(id),
+  started_at TEXT NOT NULL,
+  started_by TEXT NOT NULL,
+  completed_at TEXT,
+  completed_by TEXT
+);
+CREATE TABLE IF NOT EXISTS onboarding_items (
+  employee_id TEXT NOT NULL REFERENCES employees(id),
+  task_key TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('done','na')),
+  done_by TEXT NOT NULL,
+  done_at TEXT NOT NULL,
+  PRIMARY KEY (employee_id, task_key)
+);
 -- InnerPoints link, R1.3: which Order Manager (Quickbase) employee record each Hub account is
 -- (set by management, never guessed). Read-only use: "My InnerPoints" on Home.
 CREATE TABLE IF NOT EXISTS ip_links (

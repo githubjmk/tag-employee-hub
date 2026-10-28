@@ -284,3 +284,6 @@ Two independent reviewers (server; web and HTTP) went over everything changed si
   - managers only see waiting requests of their own people in "also off";
   - ending time off early now notifies the person or their manager.
 - Owner 2026-10-27: (1) only one full-access account, so self-approval of own time off stays; (2) "yes same rule": company documents are signed during work hours only (paid time), like the weekly report; reading is not blocked.
+
+## Onboarding checklist (owner 2026-10-28)
+- From the New Hire Checklist: office, supervisor, new-hire and automatic items. Only ticks are stored. See `14-onboarding-checklist.md`.

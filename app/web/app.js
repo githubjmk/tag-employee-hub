@@ -160,8 +160,8 @@ function shell(active, body) {
 }
 
 function applyCssVars(scope) {
-  scope.querySelectorAll('[data-css-p],[data-css-h]').forEach(el => {
-    for (const k of ['p', 'h']) { const v = el.getAttribute('data-css-' + k); if (v !== null) el.style.setProperty('--' + k, v); }
+  scope.querySelectorAll('[data-css-p],[data-css-h],[data-css-w]').forEach(el => {
+    for (const k of ['p', 'h', 'w']) { const v = el.getAttribute('data-css-' + k); if (v !== null) el.style.setProperty('--' + k, v); }
   });
 }
 function render(active, body, focusSel) {
@@ -582,6 +582,7 @@ async function homeView() {
   const open = h.surveys.slice().reverse().find(x => ['open', 'missing'].includes(x.state));
   const todo = [];
   for (const r of h.reviewItems) todo.push(html`<a class="todo ${r.state === 'clarification_requested' ? 'urgent' : ''}" href="#/record/${r.submissionId}">${icon(r.state === 'clarification_requested' ? 'q' : 'check')}<span><strong>${r.state === 'clarification_requested' ? t('question_from') : t('review_title')}</strong><small>${t('week_of')} ${fmtDate(r.weekId)}</small></span><span class="go">${t('open')}</span></a>`);
+  for (const p of (h.onboarding && h.onboarding.team) || []) todo.push(html`<a class="todo" href="#/onboard/${p.id}">${icon('check')}<span><strong>${t('ob_todo')}: ${p.name}</strong><small>${p.open} ${t(p.open === 1 ? 'ob_item_one' : 'ob_item_many')}</small></span><span class="go">${t('open')}</span></a>`);
   if (h.timeOff && h.timeOff.toApprove) todo.push(html`<a class="todo" href="#/time/team">${icon('clock')}<span><strong>${t('tm_todo')}</strong><small>${h.timeOff.toApprove} ${t(h.timeOff.toApprove === 1 ? 'tm_request_one' : 'tm_request_many')}</small></span><span class="go">${t('open')}</span></a>`);
   for (const d of h.pendingDocs || []) todo.push(html`<a class="todo" href="#/docs/${d.documentId}">${icon('check')}<span><strong>${t('doc_please_sign_one')}</strong><small>${L(d.title) || d.title.en} · ${t('doc_version')} ${d.version}</small></span><span class="go">${t('open')}</span></a>`);
   const nowS = S.me.now;
@@ -596,6 +597,7 @@ async function homeView() {
     <section class="portal-hero"><p class="eyebrow">Innerspace Cases · ${fmtDate(S.me.now, { weekday: 'long', month: 'long', day: 'numeric' })}</p><h1>${t('hello')}, ${h.greetingName}</h1><span class="gold-rule" aria-hidden="true"></span></section>
     ${isStaff() ? html`<div id="team-slot"></div>` : ''}
     ${todo.length ? html`<section class="card attention"><h2>${t('attention')}</h2><div class="todo-list">${todo}</div></section>` : ''}
+    <div id="onboard-slot"></div>
     <div id="guide-slot"></div>
     <div class="big-actions">
       ${surveyTile}
@@ -609,6 +611,7 @@ async function homeView() {
     ${h.links && h.links.length ? html`<h2 class="portal-section-title">${t('links')}</h2><div class="portal-tiles">${h.links.map(l => html`<a class="portal-tile" href="${l.url}" target="_blank" rel="noopener noreferrer">${icon('ext')}<strong>${L(l.label)}</strong><small>${l.note}</small><span class="sr">(${t('opens_new')})</span></a>`)}</div>` : ''}
     ${S.lang === 'es' ? html`<p class="fine">${t('es_draft')}</p>` : ''}`);
   if (isStaff()) loadTeamCard();
+  if (h.onboarding && h.onboarding.me) onboardCard();
   loadPoints(); loadHours(); guideCard();
 }
 // "My weekly reports": this week and last week at a glance, including where the review is.
@@ -1237,7 +1240,8 @@ async function accountsView() {
     ${a.status === 'active' && a.onboarding ? setupStatus(a) : ''}
     ${a.id !== S.me.employee.id && a.status === 'active' && (admin || (a.role === 'staff' && a.reportsTo === S.me.employee.id)) ? html`<div class="row-actions">
       ${a.role === 'staff' && !a.pinSet ? html`${a.email ? html`<button class="btn" data-act="invite-email" data-id="${a.id}">${icon('bell')} ${a.onboarding && a.onboarding.invite ? 'Send a new welcome email' : 'Send welcome email'}</button>` : ''}
-      <button class="btn-quiet" data-act="invite-qr" data-id="${a.id}">Show invite QR code</button>` : ''}</div>` : ''}
+      <button class="btn-quiet" data-act="invite-qr" data-id="${a.id}">Show invite QR code</button>` : ''}
+      ${a.checklist ? html`<a class="btn-quiet" href="#/onboard/${a.id}">${a.checklist.completed ? 'Onboarding checklist (complete)' : 'Onboarding checklist'}</a>` : html`<button class="btn-quiet" data-act="ob-start" data-eid="${a.id}">Start onboarding checklist</button>`}</div>` : ''}
     ${a.id !== S.me.employee.id && a.status === 'active' ? html`<div class="row-actions">
       ${admin || (a.role === 'staff' && a.reportsTo === S.me.employee.id) ? html`<form data-form="setupcode" data-id="${a.id}"><button class="btn" type="submit">Reset PIN</button></form>` : ''}
       ${admin && a.role === 'management' ? html`<form data-form="enrolltotp" data-id="${a.id}"><button class="btn-quiet" type="submit">Reset authenticator</button></form>` : ''}
@@ -1342,6 +1346,7 @@ function moreView() {
     <div class="stack">
       ${isStaff() ? html`<a class="card row link-row" href="#/checkin">${icon('check')}<span class="grow">My weekly survey and previous surveys</span></a>
         <a class="card row link-row" href="#/actions">${icon('wrench')}<span class="grow">All corrective actions</span></a>
+        <a class="card row link-row" href="#/onboard">${icon('check')}<span class="grow">${t('ob_title')}</span></a>
         ${can('accounts.manage') || can('accounts.pinReset.team') ? html`<a class="card row link-row" href="#/accounts">${icon('lock')}<span class="grow">${t('team_people')}</span></a>` : ''}` : ''}
       ${!m.deviceId ? html`<a class="card row link-row" href="#/getstarted">${icon('check')}<span class="grow">${t('gs_card_t')}</span></a>` : ''}
       <a class="card row link-row" href="#/time">${icon('clock')}<span class="grow">${t('tm_title')}</span></a>
@@ -1590,6 +1595,63 @@ async function adminView(params) {
 }
 
 // ---------------------------------------------------------------- router
+
+// ---------------------------------------------------------------- onboarding checklist (R1.3, owner 2026-10-28)
+const OB_GROUPS = [['office', 'ob_g_office'], ['supervisor', 'ob_g_supervisor'], ['employee', 'ob_g_employee'], ['auto', 'ob_g_auto']];
+function obProgress(done, total) {
+  return html`<div class="ob-progress" role="progressbar" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${done}" aria-label="${t('ob_progress')}"><span data-css-w="${total ? done / total : 0}"></span></div><p class="meta">${done} / ${total} ${t('ob_done_of')}</p>`;
+}
+function obItem(c, it) {
+  const label = t('ob_t_' + it.key), help = t('ob_h_' + it.key);
+  return html`<li class="ob-item ${it.done ? 'done' : ''} ${it.status === 'na' ? 'na' : ''}">
+    <span class="ob-check" aria-hidden="true">${it.status === 'na' ? '–' : it.done ? '✓' : '○'}</span>
+    <div class="grow"><strong>${label}</strong>${it.optional ? html` <span class="meta">(${t('ob_optional')})</span>` : ''}
+      ${help ? html`<br><span class="meta">${help}</span>` : ''}
+      ${it.link ? html`<br><a href="${it.link}" target="_blank" rel="noopener noreferrer">${t('ob_open_link')} ${icon('ext')}</a>` : ''}
+      ${it.doneBy ? html`<br><span class="meta">${it.status === 'na' ? t('ob_marked_na') : t('ob_ticked')} ${t('tm_by')} ${it.doneBy} · ${fmtDT(it.doneAt)}</span>` : ''}</div>
+    ${it.canMark ? html`<div class="ob-actions">${it.done
+        ? html`<button class="btn-quiet" data-act="ob-mark" data-eid="${c.employee.id}" data-task="${it.key}" data-status="undo">${t('ob_undo')}</button>`
+        : html`<button class="btn" data-act="ob-mark" data-eid="${c.employee.id}" data-task="${it.key}" data-status="done">${t('ob_mark')}</button>${it.optional ? html`<button class="btn-quiet" data-act="ob-mark" data-eid="${c.employee.id}" data-task="${it.key}" data-status="na">${t('ob_na')}</button>` : ''}`}</div>` : ''}
+  </li>`;
+}
+async function onboardCard() {
+  const slot = document.getElementById('onboard-slot'); if (!slot) return;
+  let c; try { c = await api.call('onboard.get', {}); } catch { return; }
+  const s2 = document.getElementById('onboard-slot'); if (!s2 || !c.active) return;
+  s2.innerHTML = String(html`<section class="card ob-card"><h2>${t('ob_my_title')}</h2><p>${t('ob_my_lede')}</p>${obProgress(c.done, c.total)}
+    <ul class="ob-list">${c.items.map(it => obItem(c, it))}</ul>
+    ${c.othersLeft ? html`<p class="fine">${t('ob_others_left').replace('{n}', c.othersLeft)}</p>` : ''}</section>`);
+  applyCssVars(s2);
+}
+async function onboardListView() {
+  if (!anyRole('supervisor', 'hr')) return go('#/home');
+  loadingView('#/onboard');
+  const r = await call('onboard.list', {});
+  const row = (p) => html`<a class="card row link-row" href="#/onboard/${p.employee.id}">${icon('check')}<span class="grow"><strong>${p.employee.name}</strong><small>${t('ob_starts')} ${fmtDate(p.employee.startDate)} · ${p.employee.supervisor || '—'} · ${p.done}/${p.total}${p.myOpen ? html` · <b>${p.myOpen} ${t('ob_for_you')}</b>` : ''}</small></span>${p.completedAt ? html`<span class="chip c-ok">${t('ob_complete')}</span>` : ''}</a>`;
+  const open = r.people.filter(p => !p.completedAt), done = r.people.filter(p => p.completedAt);
+  render('#/onboard', html`<h1>${t('ob_title')}</h1><p class="lede">${t('ob_lede')}</p>
+    ${open.length ? html`<div class="stack">${open.map(row)}</div>` : html`<p class="empty-inline">${t('ob_none')}</p>`}
+    ${done.length ? html`<details class="card"><summary>${t('ob_completed')} (${done.length})</summary><div class="stack">${done.map(row)}</div></details>` : ''}`);
+}
+async function onboardView(eid) {
+  loadingView('#/onboard');
+  const c = await call('onboard.get', { employeeId: eid === 'me' ? undefined : eid });
+  const mgr = anyRole('supervisor', 'hr') && c.employee.id !== S.me.employee.id;
+  if (!c.active && !c.completedAt) {
+    return render('#/onboard', html`<a class="back" href="#/onboard">${icon('back')} ${t('ob_title')}</a><h1>${c.employee.name}</h1><p>${t('ob_not_started')}</p>
+      ${mgr ? html`<button class="btn primary" data-act="ob-start" data-eid="${c.employee.id}">${t('ob_start')}</button>` : ''}`);
+  }
+  const groups = OB_GROUPS.map(([who, label]) => [label, c.items.filter(i => i.who === who)]).filter(([, list]) => list.length);
+  render('#/onboard', html`${mgr ? html`<a class="back" href="#/onboard">${icon('back')} ${t('ob_title')}</a>` : ''}
+    <h1>${mgr ? c.employee.name : t('ob_my_title')}</h1>
+    ${mgr ? html`<p class="meta">${t('ob_starts')} ${fmtDate(c.employee.startDate)} · ${t('reports_to')} ${c.employee.supervisor || '—'}${c.completedAt ? html` · <span class="chip c-ok">${t('ob_complete')}</span>` : ''}</p>` : ''}
+    ${obProgress(c.done, c.total)}
+    <p class="fine">${t('ob_privacy')}</p>
+    ${groups.map(([label, list]) => html`<section class="card"><h2>${t(label)}</h2><ul class="ob-list">${list.map(it => obItem(c, it))}</ul></section>`)}
+    ${c.othersLeft ? html`<p class="fine">${t('ob_others_left').replace('{n}', c.othersLeft)}</p>` : ''}
+    ${mgr && can('accounts.manage') ? html`<div class="row wrap">${c.completedAt ? html`<button class="btn-quiet" data-act="ob-finish" data-eid="${c.employee.id}" data-reopen="1">${t('ob_reopen')}</button>` : html`<button class="btn-quiet" data-act="ob-finish" data-eid="${c.employee.id}">${t('ob_close')}</button>`}</div>` : ''}`);
+  applyCssVars(root);
+}
 
 // ---------------------------------------------------------------- my time: hours + time off (R1.3, owner 2026-10-27)
 const TO_KIND = { vacation: 'tm_k_vacation', sick: 'tm_k_sick', unpaid: 'tm_k_unpaid', other: 'tm_k_other' };
@@ -1855,6 +1917,7 @@ async function route() {
       case 'getstarted': S.guide = null; return await guideView();
       case 'admin': return await adminView(params);
       case 'accounts': return await accountsView();
+      case 'onboard': return parts[1] ? await onboardView(parts[1]) : await onboardListView();
       case 'time':
         if (parts[1] === 'request') return await timeRequestView(params);
         if (parts[1] === 'team') return await timeTeamView();
@@ -1914,6 +1977,13 @@ root.addEventListener('click', async (ev) => {
     el.closest('form').querySelectorAll('input[name=newPin], input[name=confirmPin]').forEach(i => { i.type = on ? 'text' : 'password'; });
     el.setAttribute('aria-pressed', String(on)); el.textContent = t(on ? 'join_hide' : 'join_show'); return;
   }
+  if (act === 'ob-mark') {
+    el.disabled = true;
+    try { await call('onboard.mark', { employeeId: el.dataset.eid, task: el.dataset.task, status: el.dataset.status }); announce(t('ob_saved')); return route(); } catch (e) { if (!quiet(e)) { el.disabled = false; announce(errMsg(e)); } }
+    return;
+  }
+  if (act === 'ob-start') { try { await call('onboard.start', { employeeId: el.dataset.eid }); return route(); } catch (e) { if (!quiet(e)) announce(errMsg(e)); } return; }
+  if (act === 'ob-finish') { try { await call('onboard.finish', { employeeId: el.dataset.eid, reopen: el.dataset.reopen === '1' }); return route(); } catch (e) { if (!quiet(e)) announce(errMsg(e)); } return; }
   if (act === 'to-cancel') {
     if (el.dataset.armed !== '1') { el.dataset.armed = '1'; el.textContent = t('tm_cancel_confirm'); return; }
     el.disabled = true;
