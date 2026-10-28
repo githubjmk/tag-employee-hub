@@ -257,3 +257,6 @@ Added after you sent the paper source: the signed record's heading now matches t
 
 ## Company documents (owner 2026-10-27: "1")
 - Handbook and policies with versions and Face ID or PIN acknowledgments; see `12-company-documents.md`.
+
+## Time off and My time (owner 2026-10-27: "ok")
+- Requests in the Hub (in person still possible), manager decides, team calendar, and approved days excuse the weekly report. See `13-time-off.md`.

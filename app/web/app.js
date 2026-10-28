@@ -579,6 +579,7 @@ async function homeView() {
   const open = h.surveys.slice().reverse().find(x => ['open', 'missing'].includes(x.state));
   const todo = [];
   for (const r of h.reviewItems) todo.push(html`<a class="todo ${r.state === 'clarification_requested' ? 'urgent' : ''}" href="#/record/${r.submissionId}">${icon(r.state === 'clarification_requested' ? 'q' : 'check')}<span><strong>${r.state === 'clarification_requested' ? t('question_from') : t('review_title')}</strong><small>${t('week_of')} ${fmtDate(r.weekId)}</small></span><span class="go">${t('open')}</span></a>`);
+  if (h.timeOff && h.timeOff.toApprove) todo.push(html`<a class="todo" href="#/time/team">${icon('clock')}<span><strong>${t('tm_todo')}</strong><small>${h.timeOff.toApprove} ${t(h.timeOff.toApprove === 1 ? 'tm_request_one' : 'tm_request_many')}</small></span><span class="go">${t('open')}</span></a>`);
   for (const d of h.pendingDocs || []) todo.push(html`<a class="todo" href="#/docs/${d.documentId}">${icon('check')}<span><strong>${t('doc_please_sign_one')}</strong><small>${L(d.title) || d.title.en} · ${t('doc_version')} ${d.version}</small></span><span class="go">${t('open')}</span></a>`);
   const nowS = S.me.now;
   const surveyTile = open && !surveyOpen()
@@ -599,6 +600,7 @@ async function homeView() {
     </div>
     <div id="points-slot"></div>
     ${myWeekCard(h)}
+    ${timeOffCard(h.timeOff)}
     <div id="hours-slot"></div>
     ${h.safety.length ? html`<section class="card"><h2>${t('my_reports')}</h2><ul class="plain-list">${h.safety.map(r => html`<li><a href="#/safety/r/${r.id}">${t('t_' + r.type)}</a><span>${sChip(r.status)} <span class="meta">${fmtDate(r.created_at)}</span></span></li>`)}</ul></section>` : ''}
     ${h.links && h.links.length ? html`<h2 class="portal-section-title">${t('links')}</h2><div class="portal-tiles">${h.links.map(l => html`<a class="portal-tile" href="${l.url}" target="_blank" rel="noopener noreferrer">${icon('ext')}<strong>${L(l.label)}</strong><small>${l.note}</small><span class="sr">(${t('opens_new')})</span></a>`)}</div>` : ''}
@@ -1321,7 +1323,7 @@ async function dashView(params) {
 const trendList = (arr) => arr.length ? html`<ul class="trend">${arr.map(x => html`<li><span>${x.label}</span><b>${x.n}</b></li>`)}</ul>` : html`<p class="meta">—</p>`;
 
 // ---------------------------------------------------------------- alerts, more, admin
-const refHref = (n) => n.kind === 'document' ? '#/docs/' + n.ref : n.kind === 'safety' || n.kind === 'safety_status' ? '#/safety/r/' + n.ref : n.kind === 'action' ? '#/actions' : (n.kind === 'review' || n.kind === 'clarification') ? '#/record/' + n.ref : n.kind === 'survey_open' ? '#/checkin' : '#/home';
+const refHref = (n) => n.kind === 'timeoff_request' ? '#/time/team' : n.kind === 'timeoff_decision' ? '#/time' : n.kind === 'document' ? '#/docs/' + n.ref : n.kind === 'safety' || n.kind === 'safety_status' ? '#/safety/r/' + n.ref : n.kind === 'action' ? '#/actions' : (n.kind === 'review' || n.kind === 'clarification') ? '#/record/' + n.ref : n.kind === 'survey_open' ? '#/checkin' : '#/home';
 async function alertsView() {
   loadingView('#/more');
   const list = await call('alerts.mine', {});
@@ -1339,6 +1341,7 @@ function moreView() {
         <a class="card row link-row" href="#/actions">${icon('wrench')}<span class="grow">All corrective actions</span></a>
         ${can('accounts.manage') || can('accounts.pinReset.team') ? html`<a class="card row link-row" href="#/accounts">${icon('lock')}<span class="grow">${t('team_people')}</span></a>` : ''}` : ''}
       ${!m.deviceId ? html`<a class="card row link-row" href="#/getstarted">${icon('check')}<span class="grow">${t('gs_card_t')}</span></a>` : ''}
+      <a class="card row link-row" href="#/time">${icon('clock')}<span class="grow">${t('tm_title')}</span></a>
       <a class="card row link-row" href="#/docs">${icon('check')}<span class="grow">${t('doc_title')}</span></a>
       <a class="card row link-row" href="#/alerts">${icon('bell')}<span class="grow">${t('alerts_title')}</span>${unseen ? html`<b class="badge">${unseen}</b>` : ''}</a>
       ${!isStaff() ? html`<a class="card row link-row" href="#/safety">${icon('alert')}<span class="grow">${t('my_reports')}</span></a>` : ''}
@@ -1585,6 +1588,85 @@ async function adminView(params) {
 
 // ---------------------------------------------------------------- router
 
+// ---------------------------------------------------------------- my time: hours + time off (R1.3, owner 2026-10-27)
+const TO_KIND = { vacation: 'tm_k_vacation', sick: 'tm_k_sick', unpaid: 'tm_k_unpaid', other: 'tm_k_other' };
+const toStatusChip = (st) => html`<span class="chip ${st === 'approved' ? 'c-ok' : st === 'pending' ? 'c-warn' : st === 'declined' ? 'c-missing' : ''}">${t('tm_st_' + st)}</span>`;
+const fmtRange = (a, b) => a === b ? fmtDate(a, { weekday: 'short', month: 'short', day: 'numeric' }) : `${fmtDate(a, { weekday: 'short', month: 'short', day: 'numeric' })} – ${fmtDate(b, { weekday: 'short', month: 'short', day: 'numeric' })}`;
+const daysTxt = (n) => `${n} ${t(n === 1 ? 'tm_workday' : 'tm_workdays')}`;
+function timeOffCard(to) {
+  if (!to) return '';
+  return html`<section class="card my-time-card"><div class="row between wrap"><h2>${t('tm_title_off')}</h2><a class="btn" href="#/time/request">${t('tm_request')}</a></div>
+    ${to.mine.length ? html`<ul class="plain-list">${to.mine.map(r => html`<li><span>${t(TO_KIND[r.kind])} · ${fmtRange(r.startDate, r.endDate)}</span>${toStatusChip(r.status)}</li>`)}</ul>` : html`<p class="meta">${t('tm_none_upcoming')}</p>`}
+    <p><a href="#/time">${t('tm_open_mytime')}</a></p></section>`;
+}
+async function myTimeView(params) {
+  loadingView('#/time');
+  const month = params.get('m') || undefined;
+  const [mine, cal] = await Promise.all([call('timeoff.mine', {}), call('timeoff.calendar', { month })]);
+  const mgr = anyRole('supervisor', 'hr');
+  const [y, mm] = cal.month.split('-').map(Number);
+  const prevM = new Date(Date.UTC(y, mm - 2, 1)).toISOString().slice(0, 7), nextM = new Date(Date.UTC(y, mm, 1)).toISOString().slice(0, 7);
+  render('#/time', html`<h1>${t('tm_title')}</h1>
+    <div id="hours-time"></div>
+    <section class="card"><div class="row between wrap"><h2>${t('tm_title_off')}</h2><a class="btn primary" href="#/time/request">${t('tm_request')}</a></div>
+      ${mgr ? html`<p><a href="#/time/team">${t('tm_team_link')}</a></p>` : ''}
+      ${mine.requests.length ? html`<ul class="to-list">${mine.requests.map(r => html`<li class="to-item ${r.status}"><div class="grow"><strong>${t(TO_KIND[r.kind])}</strong> · ${fmtRange(r.startDate, r.endDate)} <span class="meta">(${daysTxt(r.workdays)})</span>
+          ${r.note ? html`<br><span class="meta">“${r.note}”</span>` : ''}
+          ${r.decidedBy ? html`<br><span class="meta">${t('tm_st_' + r.status)} ${t('tm_by')} ${r.decidedBy}${r.decisionNote ? html` — “${r.decisionNote}”` : ''}</span>` : r.status === 'pending' ? html`<br><span class="meta">${t('tm_waiting')}</span>` : ''}
+          ${r.requestedBy ? html`<br><span class="meta">${t('tm_entered_by')} ${r.requestedBy}</span>` : ''}</div>
+          <div class="to-side">${toStatusChip(r.status)}${r.canCancel ? html`<button class="btn-quiet" data-act="to-cancel" data-id="${r.id}">${t('tm_cancel')}</button>` : ''}</div></li>`)}</ul>`
+        : html`<p class="meta">${t('tm_none')}</p>`}
+      <p class="fine">${t('tm_balance_note')}</p></section>
+    <section class="card"><h2>${t('tm_calendar')}</h2>
+      <div class="weeknav"><a class="btn-quiet" href="#/time?m=${prevM}">←</a><strong>${fmtDate(cal.month + '-15', { month: 'long', year: 'numeric' })}</strong><a class="btn-quiet" href="#/time?m=${nextM}">→</a></div>
+      ${cal.entries.length ? html`<ul class="to-cal">${cal.entries.map(e => html`<li class="${e.mine ? 'mine' : ''} ${e.pending ? 'pending' : ''}"><span class="to-dates">${fmtRange(e.startDate < cal.first ? cal.first : e.startDate, e.endDate > cal.last ? cal.last : e.endDate)}</span><span class="grow">${e.name}${e.kind ? html` <span class="meta">· ${t(TO_KIND[e.kind])}</span>` : ''}</span>${e.pending ? html`<span class="chip c-warn">${t('tm_st_pending')}</span>` : ''}</li>`)}</ul>`
+        : html`<p class="meta">${t('tm_cal_empty')}</p>`}
+      <p class="fine">${mgr ? t('tm_cal_note_mgr') : t('tm_cal_note')}</p></section>`);
+  loadHours('hours-time');
+}
+async function timeRequestView(params) {
+  loadingView('#/time');
+  const mgr = anyRole('supervisor', 'hr');
+  const team = mgr ? await call('timeoff.team', {}).catch(() => null) : null;
+  const forOther = mgr && params.get('for') === '1' && team && team.people.length;
+  render('#/time', html`<a class="back" href="${forOther ? '#/time/team' : '#/time'}">${icon('back')} ${t(forOther ? 'tm_team_title' : 'tm_title')}</a>
+    <h1>${t(forOther ? 'tm_enter_for' : 'tm_request')}</h1>
+    <form data-form="toreq" class="card" novalidate>
+      ${forOther ? html`<label class="field"><span>${t('tm_person')}</span><select name="employeeId" required>${team.people.map(p => html`<option value="${p.id}">${p.name}</option>`)}</select></label>` : ''}
+      <fieldset class="field"><legend>${t('tm_kind')}</legend><div class="choice-list">${Object.keys(TO_KIND).map((k, i) => html`<label class="check"><input type="radio" name="kind" value="${k}" ${i === 0 ? raw('checked') : ''}><span>${t(TO_KIND[k])}</span></label>`)}</div></fieldset>
+      <div class="row wrap gap"><label class="field"><span>${t('tm_first')}</span><input name="startDate" type="date" required></label><label class="field"><span>${t('tm_last')}</span><input name="endDate" type="date" required></label></div>
+      <p class="meta" id="to-hint" aria-live="polite"></p>
+      <label class="field"><span>${t('tm_note')}</span><input name="note" maxlength="300" autocomplete="off"></label>
+      <p class="fine">${t('tm_no_medical')}</p>
+      ${forOther ? html`<label class="check"><input type="checkbox" name="approveNow" checked><span>${t('tm_approve_now')}</span></label>` : ''}
+      <button class="btn primary wide" type="submit">${t(forOther ? 'tm_save' : 'tm_send')}</button></form>`);
+}
+function timeRequestHint(form) {
+  const f = form.elements, hint = document.getElementById('to-hint'); if (!hint) return;
+  if (f.startDate.value && (!f.endDate.value || f.endDate.value < f.startDate.value)) f.endDate.value = f.startDate.value;
+  const a = f.startDate.value, b = f.endDate.value; if (!a || !b) { hint.textContent = ''; return; }
+  let n = 0; for (let d = new Date(a + 'T12:00:00Z'); d <= new Date(b + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1)) if (d.getUTCDay() >= 1 && d.getUTCDay() <= 5) n++;
+  const kind = form.querySelector('input[name=kind]:checked')?.value;
+  const ahead = Math.round((new Date(a + 'T12:00:00Z') - new Date(String(S.me.now).slice(0, 10) + 'T12:00:00Z')) / 86400000);
+  hint.textContent = daysTxt(n) + (kind === 'vacation' && ahead >= 0 && ahead < 60 ? ' · ' + t('tm_60_hint') : '');
+}
+async function timeTeamView() {
+  if (!anyRole('supervisor', 'hr')) return go('#/time');
+  loadingView('#/time');
+  const r = await call('timeoff.team', {});
+  render('#/time', html`<a class="back" href="#/time">${icon('back')} ${t('tm_title')}</a>
+    <div class="row between wrap"><h1>${t('tm_team_title')}</h1><a class="btn" href="#/time/request?for=1">${t('tm_enter_for')}</a></div>
+    <h2 class="portal-section-title">${t('tm_to_decide')} (${r.pending.length})</h2>
+    ${r.pending.length ? r.pending.map(x => html`<article class="card to-decide" id="to-${x.id}"><div class="row between wrap"><h3 class="h3">${x.employee.name}</h3>${toStatusChip(x.status)}</div>
+      <p><strong>${t(TO_KIND[x.kind])}</strong> · ${fmtRange(x.startDate, x.endDate)} <span class="meta">(${daysTxt(x.workdays)})</span></p>
+      <p class="meta">${t('tm_asked')} ${fmtDT(x.requestedAt)}${x.noticeDays >= 0 ? ` · ${x.noticeDays} ${t('tm_days_ahead')}` : ''}${x.requestedBy ? ` · ${t('tm_entered_by')} ${x.requestedBy}` : ''}</p>
+      ${x.note ? html`<p>“${x.note}”</p>` : ''}
+      <p class="${x.alsoOff.length ? 'warn' : 'meta'}">${x.alsoOff.length ? html`${t('tm_also_off')}: ${x.alsoOff.map((o, i) => html`${i ? ', ' : ''}${o.name} (${fmtRange(o.startDate, o.endDate)}${o.pending ? ', ' + t('tm_st_pending').toLowerCase() : ''})`)}` : t('tm_nobody_off')}</p>
+      ${x.canDecide ? html`<form data-form="todecide" data-id="${x.id}" class="row wrap" novalidate><input name="note" maxlength="300" placeholder="${t('tm_decision_note')}" aria-label="${t('tm_decision_note')}" class="grow">
+        <button class="btn primary" type="submit" name="decision" value="approve">${t('tm_approve')}</button><button class="btn" type="submit" name="decision" value="decline">${t('tm_decline')}</button></form>` : html`<p class="fine">${t('tm_not_yours')}</p>`}</article>`) : html`<p class="empty-inline">${t('tm_nothing_to_decide')}</p>`}
+    <section class="card"><h2>${t('tm_upcoming')}</h2>${r.upcoming.length ? html`<ul class="to-list">${r.upcoming.map(x => html`<li class="to-item"><div class="grow"><strong>${x.employee.name}</strong> · ${t(TO_KIND[x.kind])} · ${fmtRange(x.startDate, x.endDate)}</div><div class="to-side">${x.canCancel ? html`<button class="btn-quiet" data-act="to-cancel" data-id="${x.id}" data-back="team">${t('tm_cancel')}</button>` : ''}</div></li>`)}</ul>` : html`<p class="meta">${t('tm_cal_empty')}</p>`}</section>`);
+}
+
 // ---------------------------------------------------------------- company documents (R1.3, owner 2026-10-27)
 // Handbook and policies. Everyone reads the published version; a document that needs it is signed
 // once with Face ID or the PIN. Full-access managers write drafts, preview, publish and see who signed.
@@ -1765,6 +1847,10 @@ async function route() {
       case 'getstarted': S.guide = null; return await guideView();
       case 'admin': return await adminView(params);
       case 'accounts': return await accountsView();
+      case 'time':
+        if (parts[1] === 'request') return await timeRequestView(params);
+        if (parts[1] === 'team') return await timeTeamView();
+        return await myTimeView(params);
       case 'docs':
         if (!parts[1]) return await docsView();
         if (parts[1] === 'status') return await docStatusView(parts[2]);
@@ -1819,6 +1905,12 @@ root.addEventListener('click', async (ev) => {
     const on = el.getAttribute('aria-pressed') !== 'true';
     el.closest('form').querySelectorAll('input[name=newPin], input[name=confirmPin]').forEach(i => { i.type = on ? 'text' : 'password'; });
     el.setAttribute('aria-pressed', String(on)); el.textContent = t(on ? 'join_hide' : 'join_show'); return;
+  }
+  if (act === 'to-cancel') {
+    if (el.dataset.armed !== '1') { el.dataset.armed = '1'; el.textContent = t('tm_cancel_confirm'); return; }
+    el.disabled = true;
+    try { await call('timeoff.cancel', { requestId: el.dataset.id }); announce(t('tm_cancelled')); return route(); } catch (e) { if (!quiet(e)) { el.disabled = false; announce(errMsg(e)); } }
+    return;
   }
   if (act === 'doc-pk-sign') return docAck(true, el);
   if (act === 'doc-usepin') { if (S.doc) { S.doc.usePin = true; S.doc.error = null; renderDoc(); root.querySelector('#docpin')?.focus(); } return; }
@@ -1973,6 +2065,7 @@ root.addEventListener('click', (ev) => {
 });
 root.addEventListener('input', (ev) => {
   if (ev.target.closest('form[data-form="join"]')) joinChecks(ev.target.closest('form'));
+  if (ev.target.closest('form[data-form="toreq"]')) timeRequestHint(ev.target.closest('form'));
   if (ev.target.closest('form[data-form="survey-step"]') && ev.target.tagName === 'TEXTAREA') { collectStep(false); scheduleSave(); }
 });
 root.addEventListener('toggle', async (ev) => {
@@ -2041,6 +2134,19 @@ root.addEventListener('submit', async (ev) => {
     try { S.pkReg = await startRegister({ signPin: f.signPin.value, totp: f.totp ? f.totp.value : undefined }); rerenderPkSetup(); document.querySelector('#pk-setup [data-act=pk-create]')?.focus(); }
     catch (e) { if (e instanceof ApiError && e.status === 401 && ['no_session', 'expired', 'locked'].includes(e.code)) return wipe(e.message); rerenderPkSetup(errMsg(e)); }
     return;
+  }
+  if (kind === 'toreq') {
+    btn.disabled = true;
+    try {
+      await call('timeoff.request', { employeeId: f.employeeId ? f.employeeId.value : undefined, kind: form.querySelector('input[name=kind]:checked')?.value, startDate: f.startDate.value, endDate: f.endDate.value || f.startDate.value, note: f.note.value, approveNow: f.approveNow ? f.approveNow.checked : false });
+      announce(t('tm_sent')); return go(f.employeeId ? '#/time/team' : '#/time');
+    } catch (e) { if (quiet(e)) return; return fail(e); }
+  }
+  if (kind === 'todecide') {
+    const decision = btn && btn.value;
+    btn.disabled = true;
+    try { await call('timeoff.decide', { requestId: form.dataset.id, decision, note: f.note.value }); announce(t(decision === 'approve' ? 'tm_approved_msg' : 'tm_declined_msg')); return route(); }
+    catch (e) { if (quiet(e)) return; return fail(e); }
   }
   if (kind === 'docack') return docAck(false, btn);
   if (kind === 'docsave') {

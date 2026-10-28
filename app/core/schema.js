@@ -121,6 +121,27 @@ CREATE TABLE IF NOT EXISTS document_acks (
 );
 CREATE TRIGGER IF NOT EXISTS document_acks_no_update BEFORE UPDATE ON document_acks BEGIN SELECT RAISE(ABORT, 'document_acks is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS document_acks_no_delete BEFORE DELETE ON document_acks BEGIN SELECT RAISE(ABORT, 'document_acks is append-only'); END;
+-- Time off requests, R1.3 (owner 2026-10-27): the person (or a manager for them) asks, the person's
+-- manager or full access approves or declines. An approved request becomes an absence, so that week's
+-- report is excused. No medical details are asked for; balances stay in payroll.
+CREATE TABLE IF NOT EXISTS time_off_requests (
+  id TEXT PRIMARY KEY,
+  employee_id TEXT NOT NULL REFERENCES employees(id),
+  kind TEXT NOT NULL CHECK (kind IN ('vacation','sick','unpaid','other')),
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL,
+  note TEXT,
+  status TEXT NOT NULL CHECK (status IN ('pending','approved','declined','cancelled')),
+  requested_by TEXT NOT NULL,
+  requested_at TEXT NOT NULL,
+  decided_by TEXT,
+  decided_at TEXT,
+  decision_note TEXT,
+  absence_id TEXT,
+  cancelled_by TEXT,
+  cancelled_at TEXT
+);
+CREATE INDEX IF NOT EXISTS time_off_dates ON time_off_requests (status, start_date, end_date);
 -- InnerPoints link, R1.3: which Order Manager (Quickbase) employee record each Hub account is
 -- (set by management, never guessed). Read-only use: "My InnerPoints" on Home.
 CREATE TABLE IF NOT EXISTS ip_links (

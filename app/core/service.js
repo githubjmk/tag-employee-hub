@@ -1057,7 +1057,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
       .filter(r => r.state === 'clarification_requested' || (r.recent && r.lastSignoff && !r.employeeSeen));
     const safety = db.all("SELECT id, type, status, created_at FROM safety_reports WHERE reporter_id=? AND (status != 'closed' OR closed_at >= ?) ORDER BY created_at DESC LIMIT 5",
       [ctx.me.id, new Date(now().getTime() - 14 * 86400000).toISOString()]);
-    return { greetingName: ctx.me.display_name.split(' ')[0], surveys, reviewItems: myReviewItems, safety, links: LINKS, reviewer: nameOf(ctx.me.supervisor_id), pendingDocs: pendingDocsFor(ctx.me.id) };
+    return { greetingName: ctx.me.display_name.split(' ')[0], surveys, reviewItems: myReviewItems, safety, links: LINKS, reviewer: nameOf(ctx.me.supervisor_id), pendingDocs: pendingDocsFor(ctx.me.id), timeOff: timeOffHome(ctx) };
   };
 
   A['survey.template'] = (ctx, { assignmentId }) => {
@@ -2299,6 +2299,132 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     return { ok: true, linkedTo: { id: u.id, name: u.name } };
   };
 
+  // ---------------------------------------------------------------- time off (R1.3, owner 2026-10-27)
+  // Replaces asking in person (which still works: a manager can enter a request for someone). The
+  // handbook asks for vacation in writing, 60 days ahead, with few people off at once; the Hub keeps
+  // the written, timestamped request and shows who else is off. Balances stay in payroll.
+  const TO_KINDS = ['vacation', 'sick', 'unpaid', 'other'];
+  const toAbsenceReason = { vacation: 'vacation', unpaid: 'leave', sick: 'other', other: 'other' };   // never a medical reason
+  const toReq = (rid) => db.get('SELECT * FROM time_off_requests WHERE id=?', [String(rid || '')]);
+  const canDecideFor = (ctx, e) => !!e && e.id !== ctx.me.id && (has(ctx, 'hr') || (has(ctx, 'supervisor') && e.supervisor_id === ctx.me.id));
+  const workdaysBetween = (a, b) => { let n = 0; for (let d = a; d <= b; d = addDays(d, 1)) { const wd = new Date(d + 'T12:00:00Z').getUTCDay(); if (wd >= 1 && wd <= 5) n++; } return n; };
+  const recomputeWeeks = (startDate, endDate) => { const cur = weekFor().weekId; for (let wk = weekFor(startDate); wk.weekId <= weekFor(endDate).weekId && wk.weekId <= cur; wk = weekFor(addDays(wk.weekId, 7))) ensureAssignments(wk); };
+  const othersOff = (r, excludeId) => db.all(`SELECT t.employee_id, t.start_date, t.end_date, t.status FROM time_off_requests t JOIN employees e ON e.id=t.employee_id
+      WHERE t.status IN ('approved','pending') AND t.employee_id != ? AND t.id != ? AND t.end_date >= ? AND t.start_date <= ? AND e.status='active' ORDER BY t.start_date`, [r.employee_id, excludeId || '', r.start_date, r.end_date])
+    .map(o => ({ name: nameOf(o.employee_id), startDate: o.start_date, endDate: o.end_date, pending: o.status === 'pending' }));
+  const toView = (ctx, r, { details = false } = {}) => ({ id: r.id, employee: pub(emp(r.employee_id)), kind: r.kind, startDate: r.start_date, endDate: r.end_date, workdays: workdaysBetween(r.start_date, r.end_date),
+    note: r.note, status: r.status, requestedAt: r.requested_at, requestedBy: r.requested_by !== r.employee_id ? nameOf(r.requested_by) : null,
+    decidedBy: r.decided_by ? nameOf(r.decided_by) : null, decidedAt: r.decided_at, decisionNote: r.decision_note,
+    canCancel: ['pending', 'approved'].includes(r.status) && r.end_date >= ymdOf(now(), tz) && (r.employee_id === ctx.me.id || canDecideFor(ctx, emp(r.employee_id))),
+    canDecide: r.status === 'pending' && canDecideFor(ctx, emp(r.employee_id)),
+    ...(details ? { alsoOff: othersOff(r, r.id), noticeDays: Math.round((new Date(r.start_date + 'T12:00:00Z') - new Date(ymdOf(new Date(r.requested_at), tz) + 'T12:00:00Z')) / 86400000) } : {}) });
+  const approversOf = (e) => { const sup = e.supervisor_id ? emp(e.supervisor_id) : null; return sup && sup.status === 'active' ? [sup.id] : db.all("SELECT id FROM employees WHERE status='active' AND roles LIKE '%\"hr\"%'", []).map(x => x.id).filter(x => x !== e.id); };
+  function approveTx(ctx, r, note) {
+    const aid = id('ABS'), n = nowIso();
+    db.run('INSERT INTO absences (id, employee_id, start_date, end_date, reason, recorded_by, created_at) VALUES (?,?,?,?,?,?,?)', [aid, r.employee_id, r.start_date, r.end_date, toAbsenceReason[r.kind], ctx.me.id, n]);
+    db.run("UPDATE time_off_requests SET status='approved', decided_by=?, decided_at=?, decision_note=?, absence_id=? WHERE id=?", [ctx.me.id, n, note || null, aid, r.id]);
+    recomputeWeeks(r.start_date, r.end_date);
+  }
+  A['timeoff.request'] = (ctx, { employeeId, kind, startDate, endDate, note, approveNow } = {}) => {
+    const e = emp(employeeId || ctx.me.id);
+    if (!e || e.status !== 'active') throw notFound();
+    const forSomeoneElse = e.id !== ctx.me.id;
+    if (forSomeoneElse && !canDecideFor(ctx, e)) throw deny('Only the person\'s manager or full access can enter time off for someone else.');
+    if (!TO_KINDS.includes(kind)) throw bad('Choose the kind of time off.', 'kind');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(startDate)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(endDate)) || endDate < startDate) throw bad('Choose the first and last day.', 'dates');
+    const today = ymdOf(now(), tz);
+    if (startDate < addDays(today, -30)) throw bad('That is more than 30 days ago. Ask your manager.', 'dates');
+    if (startDate > addDays(today, 400)) throw bad('That is more than a year away.', 'dates');
+    if (workdaysBetween(startDate, endDate) === 0) throw bad('Those dates are all on a weekend.', 'dates');
+    if (workdaysBetween(startDate, endDate) > 60) throw bad('That is longer than 60 workdays. Talk to management about a leave of absence.', 'dates');
+    const clash = db.get("SELECT id FROM time_off_requests WHERE employee_id=? AND status IN ('pending','approved') AND end_date >= ? AND start_date <= ?", [e.id, startDate, endDate]);
+    if (clash) throw new HubError(409, 'overlap', forSomeoneElse ? `${e.display_name} already has time off asked for or approved on some of those days.` : 'You already have time off asked for or approved on some of those days.');
+    const text = String(note || '').trim().slice(0, 300) || null;
+    const rid = id('TO'), n = nowIso();
+    tx(() => {
+      db.run('INSERT INTO time_off_requests (id, employee_id, kind, start_date, end_date, note, status, requested_by, requested_at) VALUES (?,?,?,?,?,?,?,?,?)', [rid, e.id, kind, startDate, endDate, text, 'pending', ctx.me.id, n]);
+      audit(ctx.me.id, 'timeoff.requested', 'employee', e.id, { requestId: rid, kind, startDate, endDate, forSomeoneElse });
+      if (forSomeoneElse && approveNow) { approveTx(ctx, toReq(rid), 'Entered by manager (asked in person)'); audit(ctx.me.id, 'timeoff.approved', 'employee', e.id, { requestId: rid }); queueNotification(e.id, { kind: 'timeoff_decision', ref: rid, subject: `Time off approved: ${startDate}${endDate !== startDate ? ' to ' + endDate : ''}`, channels: ['in_app'], hold: false }); }
+      else for (const a of approversOf(e)) if (a !== ctx.me.id) queueNotification(a, { kind: 'timeoff_request', ref: rid, subject: `Time off request from ${e.display_name}: ${startDate}${endDate !== startDate ? ' to ' + endDate : ''}`, channels: ['in_app'], hold: false });
+    });
+    return { ok: true, request: toView(ctx, toReq(rid), { details: true }) };
+  };
+  A['timeoff.decide'] = (ctx, { requestId, decision, note } = {}) => {
+    const r = toReq(requestId); if (!r) throw notFound();
+    const e = emp(r.employee_id);
+    if (!canDecideFor(ctx, e)) throw deny(r.employee_id === ctx.me.id ? 'Someone else has to approve your own time off.' : 'Only the person\'s manager or full access can decide.');
+    if (r.status !== 'pending') throw new HubError(409, 'not_pending', 'This request was already decided or cancelled.');
+    if (!['approve', 'decline'].includes(decision)) throw bad('Approve or decline.');
+    const text = String(note || '').trim().slice(0, 300) || null;
+    if (decision === 'decline' && !text) throw bad('Add a short note so they know why (for example, too many people off that week).', 'note');
+    tx(() => {
+      if (decision === 'approve') approveTx(ctx, r, text);
+      else db.run("UPDATE time_off_requests SET status='declined', decided_by=?, decided_at=?, decision_note=? WHERE id=?", [ctx.me.id, nowIso(), text, r.id]);
+      audit(ctx.me.id, decision === 'approve' ? 'timeoff.approved' : 'timeoff.declined', 'employee', e.id, { requestId: r.id });
+      queueNotification(e.id, { kind: 'timeoff_decision', ref: r.id, subject: `Time off ${decision === 'approve' ? 'approved' : 'declined'}: ${r.start_date}${r.end_date !== r.start_date ? ' to ' + r.end_date : ''}`, channels: ['in_app'], hold: false });
+    });
+    return { ok: true, request: toView(ctx, toReq(r.id), { details: true }) };
+  };
+  A['timeoff.cancel'] = (ctx, { requestId } = {}) => {
+    const r = toReq(requestId); if (!r) throw notFound();
+    const v = toView(ctx, r);
+    if (!v.canCancel) throw deny('This request cannot be cancelled (already past, decided, or not yours).');
+    tx(() => {
+      if (r.absence_id) { db.run('DELETE FROM absences WHERE id=?', [r.absence_id]); recomputeWeeks(r.start_date, r.end_date); }
+      db.run("UPDATE time_off_requests SET status='cancelled', cancelled_by=?, cancelled_at=? WHERE id=?", [ctx.me.id, nowIso(), r.id]);
+      audit(ctx.me.id, 'timeoff.cancelled', 'employee', r.employee_id, { requestId: r.id, wasApproved: !!r.absence_id });
+      if (r.employee_id !== ctx.me.id) queueNotification(r.employee_id, { kind: 'timeoff_decision', ref: r.id, subject: `Time off cancelled by ${ctx.me.display_name}: ${r.start_date}`, channels: ['in_app'], hold: false });
+      else if (r.status === 'approved') for (const a of approversOf(emp(r.employee_id))) queueNotification(a, { kind: 'timeoff_request', ref: r.id, subject: `${ctx.me.display_name} cancelled approved time off: ${r.start_date}`, channels: ['in_app'], hold: false });
+    });
+    return { ok: true };
+  };
+  A['timeoff.mine'] = (ctx) => {
+    const since = addDays(ymdOf(now(), tz), -120);
+    const rows = db.all('SELECT * FROM time_off_requests WHERE employee_id=? AND (end_date >= ? OR status=\'pending\') ORDER BY start_date DESC', [ctx.me.id, since]);
+    return { requests: rows.map(r => toView(ctx, r, { details: r.status === 'pending' })), today: ymdOf(now(), tz) };
+  };
+  A['timeoff.team'] = (ctx) => {
+    if (!any(ctx, 'supervisor', 'hr')) throw deny();
+    const today = ymdOf(now(), tz);
+    const scope = (r) => canDecideFor(ctx, emp(r.employee_id)) || (has(ctx, 'hr') && r.employee_id === ctx.me.id);
+    const pending = db.all("SELECT * FROM time_off_requests WHERE status='pending' ORDER BY start_date", []).filter(scope).map(r => toView(ctx, r, { details: true }));
+    const upcoming = db.all("SELECT * FROM time_off_requests WHERE status='approved' AND end_date >= ? ORDER BY start_date LIMIT 60", [today]).filter(scope).map(r => toView(ctx, r));
+    const recent = db.all("SELECT * FROM time_off_requests WHERE status IN ('declined','cancelled') AND decided_at >= ? OR (status='cancelled' AND cancelled_at >= ?) ORDER BY requested_at DESC LIMIT 20", [addDays(today, -30), addDays(today, -30)]).filter(scope).map(r => toView(ctx, r));
+    return { pending, upcoming, recent, people: teamOf(ctx).filter(e => e.status === 'active' && canDecideFor(ctx, e)).map(pub) };
+  };
+  // Team calendar: everyone sees who is off (names and dates only); managers also see the kind and pending requests.
+  A['timeoff.calendar'] = (ctx, { month } = {}) => {
+    const m = /^\d{4}-\d{2}$/.test(String(month || '')) ? month : ymdOf(now(), tz).slice(0, 7);
+    const first = m + '-01', last = addDays(new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 1)).toISOString().slice(0, 10), -1);
+    const mgr = any(ctx, 'supervisor', 'hr');
+    const rows = db.all(`SELECT t.* FROM time_off_requests t JOIN employees e ON e.id=t.employee_id WHERE e.status='active' AND t.status IN ('approved','pending') AND t.end_date >= ? AND t.start_date <= ? ORDER BY t.start_date`, [first, last])
+      .filter(r => r.status === 'approved' || r.employee_id === ctx.me.id || canDecideFor(ctx, emp(r.employee_id)));
+    return { month: m, first, last, entries: rows.map(r => ({ name: nameOf(r.employee_id), employeeId: r.employee_id, startDate: r.start_date, endDate: r.end_date, pending: r.status === 'pending',
+      kind: mgr || r.employee_id === ctx.me.id ? r.kind : null, mine: r.employee_id === ctx.me.id })) };
+  };
+  function timeOffHome(ctx) {
+    const today = ymdOf(now(), tz);
+    const mine = db.all("SELECT * FROM time_off_requests WHERE employee_id=? AND status IN ('pending','approved') AND end_date >= ? ORDER BY start_date LIMIT 2", [ctx.me.id, today]).map(r => ({ id: r.id, kind: r.kind, startDate: r.start_date, endDate: r.end_date, status: r.status }));
+    const toApprove = any(ctx, 'supervisor', 'hr') ? db.all("SELECT employee_id FROM time_off_requests WHERE status='pending'", []).filter(r => canDecideFor(ctx, emp(r.employee_id))).length : 0;
+    return { mine, toApprove };
+  }
+  async function seedDemoTimeOff() {
+    if (!cfg.demo || db.get('SELECT 1 FROM time_off_requests LIMIT 1')) return;
+    const today = ymdOf(now(), tz);
+    const mondayAfter = (d, weeks) => { let x = addDays(d, weeks * 7); while (new Date(x + 'T12:00:00Z').getUTCDay() !== 1) x = addDays(x, 1); return x; };
+    const mk = (eid, kind, s, e, note, status, by) => {
+      const rid = id('TO'), n = nowIso();
+      db.run('INSERT INTO time_off_requests (id, employee_id, kind, start_date, end_date, note, status, requested_by, requested_at) VALUES (?,?,?,?,?,?,?,?,?)', [rid, eid, kind, s, e, note, 'pending', eid, n]);
+      if (status === 'approved') { const me = emp(by); approveTx({ me, roles: rolesOf(me) }, toReq(rid), null); }
+    };
+    tx(() => {
+      const w3 = mondayAfter(today, 3), w5 = mondayAfter(today, 5);
+      mk('E-105', 'vacation', w5, addDays(w5, 4), 'Family visit', 'approved', 'E-102');
+      mk('E-108', 'vacation', addDays(w5, 2), addDays(w5, 4), null, 'pending');
+      mk('E-107', 'other', w3, w3, 'DMV appointment', 'pending');
+    });
+  }
+
   // ---------------------------------------------------------------- company documents (R1.3, owner 2026-10-27)
   // Handbook, policies and other documents. A full-access manager writes a draft, then publishes it;
   // a published version never changes (a change is a new version, and everyone signs again). Each
@@ -2670,7 +2796,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   // The file carries the audit-chain head and its own SHA-256 so a copy can be checked later.
   const BACKUP_TABLES = ['employees', 'devices', 'esign_consents', 'absences', 'survey_assignments', 'survey_drafts', 'survey_submissions', 'survey_amendments',
     'supervisor_reviews', 'review_events', 'paper_events', 'safety_reports', 'safety_events', 'corrective_actions', 'ca_events', 'attachments', 'notifications',
-    'notification_attempts', 'audit_events', 'passkeys', 'qbt_links', 'employee_contacts', 'invites', 'ip_links', 'documents', 'document_versions', 'document_acks'];
+    'notification_attempts', 'audit_events', 'passkeys', 'qbt_links', 'employee_contacts', 'invites', 'ip_links', 'documents', 'document_versions', 'document_acks', 'time_off_requests'];
   const BACKUP_OMIT = { employees: ['pin_salt', 'pin_hash', 'setup_code_hash', 'setup_code_expires', 'setup_code_issued_by', 'totp_secret', 'totp_last_counter', 'failed_logins', 'locked_until', 'lockouts_24h', 'sim_fail_sms'], devices: ['token_hash'], passkeys: ['public_key_jwk', 'credential_id'], invites: ['token_hash'] };
   A['admin.backupExport'] = (ctx) => {
     if (!has(ctx, 'hr')) throw deny('Only a full-access manager can export a backup.');
@@ -2711,7 +2837,7 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
     return n;
   }
 
-  return { call, login, logout, seedDemoDocs, passkeyOptions, passkeyLogin, invitePeek, inviteAccept, ensurePushKeys, pushPublic, pushPending, pushTick, tick, sealLegacySecrets, recordRestores, publicInfo, kioskRoster, dispatchDue, deliveryReceipt, bootstrap, bootstrapStatus, bootstrapRecover, ensureAssignments, actions: Object.keys(A), config: cfg, _audit: audit, _serial: serial, _weekFor: weekFor };
+  return { call, login, logout, seedDemoDocs, seedDemoTimeOff, passkeyOptions, passkeyLogin, invitePeek, inviteAccept, ensurePushKeys, pushPublic, pushPending, pushTick, tick, sealLegacySecrets, recordRestores, publicInfo, kioskRoster, dispatchDue, deliveryReceipt, bootstrap, bootstrapStatus, bootstrapRecover, ensureAssignments, actions: Object.keys(A), config: cfg, _audit: audit, _serial: serial, _weekFor: weekFor };
 }
 
 export const TYPE_LABEL = {

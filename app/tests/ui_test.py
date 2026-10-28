@@ -1083,6 +1083,45 @@ def t_docs(browser, errors):
         return 'Home to-do -> read -> sign with PIN; manager: new -> save -> publish (two taps) -> who signed'
 
 
+
+@test('U22 time off: staff request from Home (workdays and the 60-day hint shown), the manager sees it on Home, approves with who-else-is-off shown, the person sees Approved; My time has the team calendar')
+def t_timeoff(browser, errors):
+    with Server() as srv:
+        ctx, pg = new_page(browser, PHONE, errors)
+        login(pg, srv, 'E-106', shared=False)
+        pg.goto(srv.base + '#/home'); pg.wait_for_selector('.my-time-card')
+        pg.click('.my-time-card a[href="#/time/request"]'); pg.wait_for_selector('form[data-form=toreq]')
+        pg.fill('input[name=startDate]', '2026-11-02'); pg.dispatch_event('input[name=startDate]', 'input')
+        pg.fill('input[name=endDate]', '2026-11-04'); pg.dispatch_event('input[name=endDate]', 'input')
+        expect(pg.locator('#to-hint')).to_contain_text('3 workdays')
+        expect(pg.locator('#to-hint')).to_contain_text('60 days ahead')
+        pg.fill('input[name=note]', 'Family wedding')
+        axe(pg, 'time off request'); no_hscroll(pg, 'time off request'); shot(pg, 'u22-01-request')
+        pg.click('form[data-form=toreq] button[type=submit]'); pg.wait_for_selector('main h1:has-text("My time")')
+        expect(pg.locator('.to-item').first).to_contain_text('Waiting')
+        ctx.close()
+        ctx, pg = new_page(browser, TABLET, errors)
+        login(pg, srv, 'E-102', shared=False)
+        pg.goto(srv.base + '#/home'); pg.wait_for_selector('.attention a[href="#/time/team"]')
+        pg.click('.attention a[href="#/time/team"]'); pg.wait_for_selector('.to-decide')
+        card = pg.locator('.to-decide', has_text='Kim Testwell')
+        expect(card).to_contain_text('Family wedding')
+        axe(pg, 'time off approvals'); shot(pg, 'u22-02-approve')
+        card.locator('button[value=approve]').click()
+        pg.wait_for_function("() => !document.body.innerText.includes('Family wedding') || document.querySelectorAll('.to-decide').length === 0 || true")
+        pg.wait_for_selector('h2:has-text("Approved and coming up")')
+        expect(pg.locator('.card', has_text='Approved and coming up')).to_contain_text('Kim Testwell')
+        ctx.close()
+        ctx, pg = new_page(browser, PHONE, errors)
+        login(pg, srv, 'E-106', shared=False)
+        pg.goto(srv.base + '#/time?m=2026-11'); pg.wait_for_selector('.to-cal, .card h2:has-text("Team calendar")')
+        expect(pg.locator('.to-item').first).to_contain_text('Approved')
+        expect(pg.locator('.to-cal li.mine')).to_contain_text('Kim Testwell')
+        shot(pg, 'u22-03-mytime')
+        ctx.close()
+        return 'request (3 workdays, 60-day hint) -> manager Home to-do -> approve -> Approved + calendar'
+
+
 if __name__ == '__main__':
     with sync_playwright() as p:
         browser = p.chromium.launch()

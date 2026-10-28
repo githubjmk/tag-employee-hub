@@ -75,7 +75,7 @@ export class Hub extends DurableObject {
       db.run("INSERT INTO meta (k, v) VALUES ('seeded', ?)", [demo ? 'demo ' + new Date().toISOString() : 'empty ' + new Date().toISOString()]);
     } else if (demo && !clock.resume()) clock.runFrom(env.HUB_DEMO_NOW || DEMO_NOW);
     db.exec(UPGRADES);                       // tables added since go-live (idempotent)
-    if (demo) { try { await service.seedDemoDocs(); } catch (e) { console.error('sample documents not created', e && e.message); } }
+    if (demo) { try { await service.seedDemoDocs(); await service.seedDemoTimeOff(); } catch (e) { console.error('sample documents not created', e && e.message); } }
     try { await service.ensurePushKeys(); } catch (e) { console.error('push keys not created', e && e.message); }
     await service.sealLegacySecrets();      // S4: authenticator secrets encrypted at rest
     try { await service.recordRestores(); } catch (e) { console.error('restore log not recorded yet', e); }
