@@ -279,3 +279,7 @@ Two independent reviewers (server; web and HTTP) went over everything changed si
 - **Documents:** published versions are locked in the database, and publishing requires the text fingerprint.
 - **Outside services:** Quickbase, QuickBooks Time and Resend calls time out (8-10 s), failures are remembered for a minute, and Home cards that wait on them no longer hold up sign-in or signing.
 - **Other:** stricter email format; staff see a plain message if InnerPoints are unavailable.
+- Review re-check (2026-10-27):
+  - a published version can no longer be turned back into a draft (database trigger);
+  - managers only see waiting requests of their own people in "also off";
+  - ending time off early now notifies the person or their manager.

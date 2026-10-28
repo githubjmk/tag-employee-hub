@@ -78,6 +78,7 @@ test('TO-03 approved time off excuses the weekly report; cancelling before it st
   assert.equal(row.status, 'approved'); assert.equal(row.end_date, '2026-10-13'); assert.match(row.decision_note, /Ended early/);
   assert.equal(db.get('SELECT end_date FROM absences WHERE employee_id=? AND start_date=?', ['E-108', '2026-10-12']).end_date, '2026-10-13', 'Monday and Tuesday stay taken');
   assert.ok(db.get("SELECT 1 FROM audit_events WHERE action='timeoff.ended_early' AND entity_id='E-108'"));
+  assert.ok(db.get("SELECT 1 FROM notifications WHERE recipient_id='E-102' AND subject LIKE '%back early%'"), 'the manager is told');
 });
 
 test('TO-05 review fixes: impossible dates refused; staff do not see others\' waiting requests; the only full-access person can approve their own; a slow Quickbase never holds up sign-in', async () => {
@@ -88,6 +89,11 @@ test('TO-05 review fixes: impossible dates refused; staff do not see others\' wa
   assert.ok(!mine.request.alsoOff.some(o => o.pending), 'staff only see approved time off of others');
   const dana = (await call('E-102', 'timeoff.team')).pending.find(x => x.id === mine.request.id);
   assert.ok(dana.alsoOff.some(o => o.pending), 'the manager sees waiting requests too');
+  const patReq = await call('E-103', 'timeoff.request', { kind: 'vacation', startDate: '2026-11-30', endDate: '2026-11-30' });
+  const kimsView = (await call('E-102', 'timeoff.team')).pending.find(x => x.id === mine.request.id);
+  assert.ok(!kimsView.alsoOff.some(o => o.name === 'Pat Safety'), 'a manager does not see waiting requests of people outside their team');
+  assert.ok((await call('E-101', 'timeoff.team')).pending.find(x => x.id === mine.request.id).alsoOff.some(o => o.name === 'Pat Safety'), 'full access sees everyone');
+  void patReq;
   // Morgan is the only full-access person in the sample data.
   const own = await call('E-101', 'timeoff.request', { kind: 'vacation', startDate: '2026-12-28', endDate: '2026-12-31' });
   assert.equal((await call('E-101', 'timeoff.decide', { requestId: own.request.id, decision: 'approve' })).request.status, 'approved');

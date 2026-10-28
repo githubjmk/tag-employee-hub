@@ -2328,15 +2328,15 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   const canDecideFor = (ctx, e) => !!e && (e.id !== ctx.me.id ? (has(ctx, 'hr') || (has(ctx, 'supervisor') && e.supervisor_id === ctx.me.id)) : (has(ctx, 'hr') && !otherHr(ctx.me.id)));
   const workdaysBetween = (a, b) => { let n = 0; for (let d = a; d <= b; d = addDays(d, 1)) { const wd = new Date(d + 'T12:00:00Z').getUTCDay(); if (wd >= 1 && wd <= 5) n++; } return n; };
   const recomputeWeeks = (startDate, endDate) => { const cur = weekFor().weekId; for (let wk = weekFor(startDate); wk.weekId <= weekFor(endDate).weekId && wk.weekId <= cur; wk = weekFor(addDays(wk.weekId, 7))) ensureAssignments(wk); };
-  const othersOff = (r, excludeId) => db.all(`SELECT t.employee_id, t.start_date, t.end_date, t.status FROM time_off_requests t JOIN employees e ON e.id=t.employee_id
+  const othersOff = (r, excludeId) => db.all(`SELECT t.employee_id AS eid, t.start_date, t.end_date, t.status FROM time_off_requests t JOIN employees e ON e.id=t.employee_id
       WHERE t.status IN ('approved','pending') AND t.employee_id != ? AND t.id != ? AND t.end_date >= ? AND t.start_date <= ? AND e.status='active' ORDER BY t.start_date`, [r.employee_id, excludeId || '', r.start_date, r.end_date])
-    .map(o => ({ name: nameOf(o.employee_id), startDate: o.start_date, endDate: o.end_date, pending: o.status === 'pending' }));
+    .map(o => ({ employeeId: o.eid, name: nameOf(o.eid), startDate: o.start_date, endDate: o.end_date, pending: o.status === 'pending' }));
   const toView = (ctx, r, { details = false } = {}) => ({ id: r.id, employee: pub(emp(r.employee_id)), kind: r.kind, startDate: r.start_date, endDate: r.end_date, workdays: workdaysBetween(r.start_date, r.end_date),
     note: r.note, status: r.status, requestedAt: r.requested_at, requestedBy: r.requested_by !== r.employee_id ? nameOf(r.requested_by) : null,
     decidedBy: r.decided_by ? nameOf(r.decided_by) : null, decidedAt: r.decided_at, decisionNote: r.decision_note,
     canCancel: ['pending', 'approved'].includes(r.status) && r.end_date >= ymdOf(now(), tz) && (r.employee_id === ctx.me.id || canDecideFor(ctx, emp(r.employee_id))),
     canDecide: r.status === 'pending' && canDecideFor(ctx, emp(r.employee_id)),
-    ...(details ? { alsoOff: othersOff(r, r.id).filter(o => !o.pending || canDecideFor(ctx, emp(r.employee_id)) && r.employee_id !== ctx.me.id || has(ctx, 'hr')), noticeDays: Math.round((new Date(r.start_date + 'T12:00:00Z') - new Date(ymdOf(new Date(r.requested_at), tz) + 'T12:00:00Z')) / 86400000) } : {}) });
+    ...(details ? { alsoOff: othersOff(r, r.id).filter(o => !o.pending || has(ctx, 'hr') || (o.employeeId !== ctx.me.id && canDecideFor(ctx, emp(o.employeeId)))).map(({ employeeId, ...o }) => o), noticeDays: Math.round((new Date(r.start_date + 'T12:00:00Z') - new Date(ymdOf(new Date(r.requested_at), tz) + 'T12:00:00Z')) / 86400000) } : {}) });
   const approversOf = (e) => { const sup = e.supervisor_id ? emp(e.supervisor_id) : null; return sup && sup.status === 'active' ? [sup.id] : db.all("SELECT id FROM employees WHERE status='active' AND roles LIKE '%\"hr\"%'", []).map(x => x.id).filter(x => x !== e.id); };
   function approveTx(ctx, r, note) {
     const aid = id('ABS'), n = nowIso();
@@ -2397,6 +2397,8 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
         db.run("UPDATE time_off_requests SET end_date=?, decision_note=? WHERE id=?", [endedOn, [r.decision_note, `Ended early (back ${today}) by ${ctx.me.display_name}`].filter(Boolean).join(' · '), r.id]);
         recomputeWeeks(today, r.end_date);
         audit(ctx.me.id, 'timeoff.ended_early', 'employee', r.employee_id, { requestId: r.id, endedOn });
+        if (r.employee_id !== ctx.me.id) queueNotification(r.employee_id, { kind: 'timeoff_decision', ref: r.id, subject: `Time off ended early by ${ctx.me.display_name}: back ${today}`, channels: ['in_app'], hold: false });
+        else for (const a of approversOf(emp(r.employee_id))) queueNotification(a, { kind: 'timeoff_request', ref: r.id, subject: `${ctx.me.display_name} is back early from time off (${today})`, channels: ['in_app'], hold: false });
       });
       return { ok: true, endedEarly: true };
     }

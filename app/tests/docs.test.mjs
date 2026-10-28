@@ -136,6 +136,7 @@ test('DOC-06 drafts can be deleted; a document can be archived (no longer asked 
   const live = db.get("SELECT id FROM document_versions WHERE status='published' LIMIT 1").id;
   assert.throws(() => db.run("UPDATE document_versions SET body_en='changed' WHERE id=?", [live]), /cannot be changed/);
   assert.throws(() => db.run('DELETE FROM document_versions WHERE id=?', [live]), /cannot be deleted/);
+  assert.throws(() => db.run("UPDATE document_versions SET status='draft' WHERE id=?", [live]), /cannot be changed/, 'a published version cannot be turned back into a draft');
   const d2 = await call('E-101', 'docs.saveDraft', { category: 'policy', titleEn: 'No hash', bodyEn: 'Text' });
   await rejects(call('E-101', 'docs.publish', { versionId: d2.versionId }), 409, 'doc_changed');
 });
