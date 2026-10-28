@@ -670,3 +670,6 @@ form.one-q .opt input:checked + span { animation: picked .28s ease-out; }
 .to-decide form input { min-width: 12em; }
 .choice-list { display: grid; gap: 6px; }
 .c-ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+
+/* Sign-in and welcome-link pages: centred on wide screens (the 860px cap is for pages beside the side menu). */
+main.login { max-width: none; }
