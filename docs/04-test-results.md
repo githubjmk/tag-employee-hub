@@ -255,3 +255,8 @@ New checks:
 - Commit 22af4e3, Worker version dbe3f61b-6ab9-4f93-9dba-f158716a2212, via the GitHub workflow (target live); tests passed in CI.
 - Checked: production mode, the new routes respond, the demo reset returns 404, documents and time off need sign-in, the portal and the welcome-link page render, and there were no console errors in Chrome.
 - Found after deploy: the sign-in and welcome-link pages were not centred on wide screens (an old 860px rule). Fixed on the test copy (next live deploy).
+
+## Live deploy 2026-10-29 09:39 PT (owner: "please deploy now so we can test with Nicoletta")
+- Commit caf06b0, Worker version 75c245ee-469d-4af9-a895-9ebc13eb5cc9, via the GitHub workflow (target live); CI tests passed.
+- Includes the onboarding checklist, the "Already works here / New hire" choice, and the centred sign-in page.
+- Checked: production mode, the onboarding actions need sign-in, the demo reset returns 404, the new code is served, the sign-in page is centred in Chrome, and there were no console errors.
