@@ -2336,7 +2336,8 @@ export function createService({ db, crypto, clock, config = {}, senders = {}, pl
   function autoDone(e, key) {
     if (key === 'a_account') return !!e.pin_hash;
     if (key === 'a_phone') return db.get('SELECT COUNT(*) n FROM passkeys WHERE employee_id=? AND removed_at IS NULL', [e.id]).n > 0;
-    if (key === 'a_docs') return pendingDocsFor(e.id).length === 0;
+    // Ticked only once something that needs a signature has been published and they signed all of it.
+    if (key === 'a_docs') return !!db.get("SELECT 1 FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE v.status='published' AND v.ack_required=1 AND d.archived_at IS NULL LIMIT 1") && pendingDocsFor(e.id).length === 0;
     if (key === 'a_report') return !!db.get('SELECT 1 FROM survey_submissions WHERE employee_id=? LIMIT 1', [e.id]);
     return false;
   }

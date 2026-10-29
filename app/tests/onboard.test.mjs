@@ -39,6 +39,13 @@ test('OB-01 a new account starts a checklist; existing staff have none; the new 
   const mine = await svc.call(a.token, 'onboard.get', {}, RP);
   assert.ok(mine.items.every(i => ['employee', 'auto'].includes(i.who)), 'only her own and automatic items');
   assert.equal(mine.items.find(i => i.key === 'a_account').done, true, 'account + PIN ticked by the Hub');
+  assert.equal(mine.items.find(i => i.key === 'a_docs').done, false, 'the sample handbook is not signed yet');
+  // With nothing published that needs a signature, the documents item is not ticked either.
+  const h3 = await createHub();
+  const owner = (await h3.service.login({ employeeId: 'E-101', pin: PIN['E-101'], totp: await totpAt(h3.crypto, await h3.crypto.openSecret(h3.db.get("SELECT totp_secret FROM employees WHERE id='E-101'").totp_secret), Math.floor(h3.clock.now().getTime() / 1000)) })).token;
+  h3.db.run("UPDATE documents SET archived_at='2026-10-01'");
+  const n3 = (await h3.service.call(owner, 'accounts.create', { name: 'No Docs', role: 'staff', reportsTo: 'E-102', startDate: '2026-10-19', newHire: true }, RP)).account.id;
+  assert.equal((await h3.service.call(owner, 'onboard.get', { employeeId: n3 }, RP)).items.find(i => i.key === 'a_docs').done, false, 'nothing published: not ticked');
   assert.ok(mine.othersLeft > 0, 'she sees how many items the office and supervisor still have');
   assert.ok((await svc.call(a.token, 'home', {}, RP)).onboarding.me, 'Home shows "Your first week"');
   const home = await call('E-102', 'home');
